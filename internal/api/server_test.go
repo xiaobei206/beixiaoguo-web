@@ -21,6 +21,7 @@ func TestAPICacheStoresExpiresAndEvicts(t *testing.T) {
 func TestCacheTTLByOperation(t *testing.T) {
 	if cacheTTL("discover")!=3*time.Minute {t.Fatal("discover TTL changed")}
 	if cacheTTL("series")!=20*time.Minute {t.Fatal("series TTL changed")}
+	if cacheTTL("seasons")!=20*time.Minute {t.Fatal("seasons TTL changed")}
 	if cacheTTL("play")!=0 {t.Fatal("playback must not be cached")}
 }
 

@@ -485,7 +485,7 @@
 
   function parseSeasonNumber(raw) {
     const value = String(raw || "");
-    if (/^\\d+$/.test(value)) return Number(value);
+    if (/^\d+$/.test(value)) return Number(value);
     const digits = {"零":0,"〇":0,"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9};
     let total = 0, current = 0;
     for (const ch of value) {
@@ -500,7 +500,7 @@
     const seasons = (Array.isArray(input) ? input : []).filter((season) => season && (season.series_id || season.seriesId)).map((season) => {
       let index = Number(season.index) || 0;
       if (index <= 0) {
-        const re = /第\\s*([0-9一二两三四五六七八九十百零〇]+)\\s*[季部]/g;
+        const re = /第\s*([0-9一二两三四五六七八九十百零〇]+)\s*[季部]/g;
         let match;
         let last = "";
         while ((match = re.exec(String(season.title || ""))) !== null) last = match[1];
@@ -537,8 +537,12 @@
       $("#season-count").textContent = seasons.length + " 季";
       list.innerHTML = seasons.map((season) => {
         const active = season.series_id === id;
-        const disabled = Number(season.episode_count) <= 0;
-        return '<button type="button" class="season-chip' + (active ? " active" : "") + \'" data-series-id="' + escapeHTML(season.series_id) + \'" aria-pressed="' + (active ? "true" : "false") + \'"' + (disabled ? ' disabled title="该季暂未上线或没有可用剧集"' : "") + '>第 ' + season.index + " 季" + (Number(season.episode_count) > 0 ? '<small>' + Number(season.episode_count) + " 集</small>" : "") + "</button>";
+        const episodeCount = Number(season.episode_count) || 0;
+        const disabled = episodeCount <= 0;
+        return '<button type="button" class="season-chip' + (active ? ' active' : '') +
+          '" data-series-id="' + escapeHTML(season.series_id) + '" aria-pressed="' + (active ? "true" : "false") + '"' +
+          (disabled ? ' disabled title="该季暂未上线或没有可用剧集"' : '') + '>第 ' + season.index + ' 季' +
+          (episodeCount > 0 ? '<small>' + episodeCount + ' 集</small>' : '') + '</button>';
       }).join("");
       list.addEventListener("click", (event) => {
         const button = event.target.closest(".season-chip");

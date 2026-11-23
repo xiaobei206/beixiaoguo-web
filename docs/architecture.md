@@ -40,11 +40,14 @@
 | GET | \`/api/v1/rank\` | 短剧排行榜 |
 | GET | \`/api/v1/series/{id}\` | 短剧详情 |
 | GET | \`/api/v1/series/{id}/episodes\` | 分集列表 |
+| GET | `/api/v1/series/{id}/seasons` | 多季合集及季列表 |
 | GET | `/api/v1/play/{episodeID}?quality=` | 解析播放模型并创建短时媒体会话 |
 | GET / HEAD | `/api/v1/media/{token}` | HTTP Range 媒体代理与 CENC 按需解密 |
 | GET | `/api/v1/images/{token}` | 同源封面代理、RAM 缓存和 ETag |
 | GET | `/api/v1/tv/devices` | mDNS 搜索 hongguoTV protocol v1 设备 |
 | POST | `/api/v1/tv/handoff` | 将剧集、集数和播放位置交给指定电视 |
+
+多季详情通过 `/api/v1/series/{id}/seasons` 调用 SDK `Seasons` 取得合集全部季；季列表独立异步加载，当前季高亮，有剧集的其他季可切换到对应详情，无可用剧集的季置灰。季数据在进程 RAM 中缓存 20 分钟。
 
 前端收藏保存在当前浏览器的 localStorage，不上传到 N1；不同设备的收藏暂不互通。目录 API 在 N1 RAM 内做有限 TTL 缓存，浏览器则在页面切换时保留每个列表、分页游标和滚动位置。
 

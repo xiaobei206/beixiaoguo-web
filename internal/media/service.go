@@ -348,7 +348,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := session.prepare(r.Context(), s); err != nil {
-		s.logger.Printf("media prepare episode=%s error_type=%T error=%v", session.episodeID, err, err)
+		s.logger.Printf("media prepare episode=%s error_type=%T", session.episodeID, err)
 		http.Error(w, "unable to prepare media stream", http.StatusBadGateway)
 		return
 	}
@@ -364,7 +364,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		upstream, err = s.openRange(r.Context(), session, requested.start, requested.end)
 		if err != nil {
-			s.logger.Printf("media upstream episode=%s range=%d-%d error_type=%T error=%v", session.episodeID, requested.start, requested.end, err, err)
+			s.logger.Printf("media upstream episode=%s range=%d-%d error_type=%T", session.episodeID, requested.start, requested.end, err)
 			http.Error(w, "media source did not honor byte range", http.StatusBadGateway)
 			return
 		}
@@ -409,7 +409,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				s.logger.Printf("media read episode=%s range=%d-%d error_type=%T error=%v", session.episodeID, requested.start, requested.end, readErr, readErr)
+				s.logger.Printf("media read episode=%s range=%d-%d error_type=%T", session.episodeID, requested.start, requested.end, readErr)
 			} else if remaining > 0 {
 				s.logger.Printf("media short upstream body episode=%s expected_remaining=%d", session.episodeID, remaining)
 			}

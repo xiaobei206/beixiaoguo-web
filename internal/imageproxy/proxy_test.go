@@ -75,3 +75,14 @@ func TestRegisterConcurrent(t *testing.T) {
 	close(results)
 	for value:=range results {if value=="" {t.Fatal("empty registration")}}
 }
+
+func TestRewriteJSONPreservesLargeIntegers(t *testing.T) {
+	p:=New()
+	input:=[]byte(`{"play_count":9007199254740993,"cover_url":"https://cdn.example/a.jpg?token=one","nested":{"count":9223372036854775807}}`)
+	got,err:=p.RewriteJSON(input)
+	if err!=nil {t.Fatal(err)}
+	text:=string(got)
+	if !strings.Contains(text,"9007199254740993") || !strings.Contains(text,"9223372036854775807") {
+		t.Fatalf("large integer changed during rewrite: %s",text)
+	}
+}

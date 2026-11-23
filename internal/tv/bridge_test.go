@@ -68,3 +68,13 @@ func TestLocalHostIPParsing(t *testing.T) {
 	ip:=net.ParseIP("192.168.1.2")
 	if ip==nil || !ip.IsPrivate() {t.Fatal("private IP test failed")}
 }
+
+func TestMulticastInterfaceSelectionRequiresIPv4(t *testing.T) {
+	iface:=net.Interface{Name:"without-ipv4"}
+	conn,err:=net.ListenUDP("udp4",&net.UDPAddr{IP:net.IPv4(127,0,0,1)})
+	if err!=nil {t.Skipf("cannot open loopback UDP socket: %v",err)}
+	defer conn.Close()
+	if err:=setMulticastInterface(conn,iface);err==nil {
+		t.Fatal("expected interface without IPv4 address to be rejected")
+	}
+}

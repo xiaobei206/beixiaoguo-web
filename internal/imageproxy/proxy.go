@@ -1,6 +1,7 @@
 package imageproxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -106,26 +107,47 @@ func (p *Proxy) Register(raw string) string {
 }
 
 func (p *Proxy) RewriteJSON(raw []byte) ([]byte,error) {
-	var value any
-	if err:=json.Unmarshal(raw,&value);err!=nil {return nil,err}
-	rewriteValue(value,p)
-	return json.Marshal(value)
+	rewritten,err:=rewriteJSON(raw,p)
+	if err!=nil {return nil,err}
+	return rewritten,nil
 }
 
-func rewriteValue(value any,p *Proxy) {
-	switch current:=value.(type) {
-	case map[string]any:
-		for key,item:=range current {
+// rewriteJSON walks raw JSON values so rewriting an image URL never converts
+// large integer fields through float64 and never changes their exact value.
+func rewriteJSON(raw json.RawMessage,p *Proxy) (json.RawMessage,error) {
+	trimmed:=bytes.TrimSpace(raw)
+	if len(trimmed)==0 {return nil,fmt.Errorf("empty JSON value")}
+	switch trimmed[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if err:=json.Unmarshal(trimmed,&object);err!=nil {return nil,err}
+		for key,value:=range object {
 			if isImageField(key) {
-				if raw,ok:=item.(string);ok && strings.TrimSpace(raw)!="" {
-					if local:=p.Register(raw);local!="" {current[key]=local}
-					continue
+				var source string
+				if err:=json.Unmarshal(value,&source);err==nil && strings.TrimSpace(source)!="" {
+					if local:=p.Register(source);local!="" {
+						encoded,_:=json.Marshal(local)
+						object[key]=encoded
+						continue
+					}
 				}
 			}
-			rewriteValue(item,p)
+			rewritten,err:=rewriteJSON(value,p)
+			if err!=nil {return nil,err}
+			object[key]=rewritten
 		}
-	case []any:
-		for _,item:=range current {rewriteValue(item,p)}
+		return json.Marshal(object)
+	case '[':
+		var items []json.RawMessage
+		if err:=json.Unmarshal(trimmed,&items);err!=nil {return nil,err}
+		for index,value:=range items {
+			rewritten,err:=rewriteJSON(value,p)
+			if err!=nil {return nil,err}
+			items[index]=rewritten
+		}
+		return json.Marshal(items)
+	default:
+		return append(json.RawMessage(nil),trimmed...),nil
 	}
 }
 
@@ -205,7 +227,7 @@ func (p *Proxy) fetch(ctx context.Context,item *entry,raw string)([]byte,string,
 	if err!=nil || p.validate(u)!=nil {return nil,"","",fmt.Errorf("invalid cover source")}
 	req,err:=http.NewRequestWithContext(ctx,http.MethodGet,raw,nil)
 	if err!=nil {return nil,"","",err}
-	req.Header.Set("Accept","image/avif,image/webp,image/apng,image/*;q=0.9,*/*;q=0.5")
+	req.Header.Set("Accept","image/jpeg,image/png,image/webp;q=0.9,image/avif;q=0.8,*/*;q=0.1")
 	req.Header.Set("User-Agent","Beixiaoguo/0.1.0 image-proxy")
 	resp,err:=p.client.Do(req)
 	if err!=nil {return nil,"","",err}

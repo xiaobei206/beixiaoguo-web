@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -90,10 +91,13 @@ func (s *Service) Discover(ctx context.Context, duration time.Duration) ([]Devic
 		}
 		if !hasIPv4 {continue}
 		conn,listenErr:=net.ListenMulticastUDP("udp4",&iface,group)
-		if listenErr==nil {
-			_ = conn.SetReadBuffer(64<<10)
-			connections=append(connections,conn)
+		if listenErr!=nil {continue}
+		if interfaceErr:=setMulticastInterface(conn,iface);interfaceErr!=nil {
+			_ = conn.Close()
+			continue
 		}
+		_ = conn.SetReadBuffer(64<<10)
+		connections=append(connections,conn)
 	}
 	if len(connections)==0 {return nil,fmt.Errorf("找不到可用于 mDNS 的局域网网卡")}
 
@@ -147,6 +151,31 @@ loop:
 	for _,device:=range devices {s.devices[device.DeviceID]=device;s.seenAt[device.DeviceID]=now}
 	s.mu.Unlock()
 	return devices,nil
+}
+
+
+func setMulticastInterface(conn *net.UDPConn,iface net.Interface) error {
+	var ipv4 net.IP
+	addresses,err:=iface.Addrs()
+	if err!=nil {return err}
+	for _,address:=range addresses {
+		if network,ok:=address.(*net.IPNet);ok {
+			if ip:=network.IP.To4();ip!=nil && !ip.IsLoopback() {
+				ipv4=ip
+				break
+			}
+		}
+	}
+	if ipv4==nil {return fmt.Errorf("interface %s has no usable IPv4 address",iface.Name)}
+	raw,err:=conn.SyscallConn()
+	if err!=nil {return err}
+	var socketErr error
+	if err:=raw.Control(func(fd uintptr) {
+		var value [4]byte
+		copy(value[:],ipv4)
+		socketErr=syscall.SetsockoptInet4Addr(int(fd),syscall.IPPROTO_IP,syscall.IP_MULTICAST_IF,value)
+	});err!=nil {return err}
+	return socketErr
 }
 
 func (state *discoveryState) devices() []Device {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net"
 	"net/netip"
@@ -51,10 +52,13 @@ type Service struct {
 	mu sync.Mutex
 	devices map[string]Device
 	seenAt map[string]time.Time
+	logger *log.Logger
 }
 
-func New() *Service {
-	return &Service{devices:make(map[string]Device),seenAt:make(map[string]time.Time)}
+func New(loggers ...*log.Logger) *Service {
+	logger:=log.Default()
+	if len(loggers)>0 && loggers[0]!=nil {logger=loggers[0]}
+	return &Service{devices:make(map[string]Device),seenAt:make(map[string]time.Time),logger:logger}
 }
 
 type srvRecord struct { host string; port int }
@@ -75,35 +79,57 @@ func newDiscoveryState() *discoveryState {
 }
 
 func (s *Service) Discover(ctx context.Context, duration time.Duration) ([]Device,error) {
-	if duration<=0 || duration>5*time.Second {duration=2500*time.Millisecond}
-	ctx,cancel:=context.WithTimeout(ctx,duration)
-	defer cancel()
+	if duration<=0 || duration>5*time.Second {duration=3200*time.Millisecond}
 	interfaces,err:=net.Interfaces()
-	if err!=nil {return nil,err}
+	if err!=nil {return nil,fmt.Errorf("读取网络接口失败：%w",err)}
 	group:=&net.UDPAddr{IP:net.ParseIP("224.0.0.251"),Port:5353}
-	connections:=make([]*net.UDPConn,0)
+	type multicastConn struct { name string; conn *net.UDPConn }
+	connections:=make([]multicastConn,0)
+	var setupFailures []string
 	for _,iface:=range interfaces {
 		if iface.Flags&net.FlagUp==0 || iface.Flags&net.FlagMulticast==0 || iface.Flags&net.FlagLoopback!=0 {continue}
 		hasIPv4:=false
-		addrs,_:=iface.Addrs()
-		for _,addr:=range addrs {
-			if ipnet,ok:=addr.(*net.IPNet);ok && ipnet.IP.To4()!=nil && !ipnet.IP.IsLoopback() {hasIPv4=true;break}
+		addrs,addrErr:=iface.Addrs()
+		if addrErr!=nil {
+			setupFailures=append(setupFailures,iface.Name+": "+addrErr.Error())
+			continue
+		}
+		for _,address:=range addrs {
+			switch network:=address.(type) {
+			case *net.IPNet:
+				if ip:=network.IP.To4();ip!=nil && !ip.IsLoopback() {hasIPv4=true}
+			case *net.IPAddr:
+				if ip:=network.IP.To4();ip!=nil && !ip.IsLoopback() {hasIPv4=true}
+			}
+			if hasIPv4 {break}
 		}
 		if !hasIPv4 {continue}
 		conn,listenErr:=net.ListenMulticastUDP("udp4",&iface,group)
-		if listenErr!=nil {continue}
-		if interfaceErr:=setMulticastInterface(conn,iface);interfaceErr!=nil {
-			_ = conn.Close()
+		if listenErr!=nil {
+			setupFailures=append(setupFailures,iface.Name+": listen: "+listenErr.Error())
 			continue
 		}
-		_ = conn.SetReadBuffer(64<<10)
-		connections=append(connections,conn)
+		if interfaceErr:=setMulticastInterface(conn,iface);interfaceErr!=nil {
+			_ = conn.Close()
+			setupFailures=append(setupFailures,iface.Name+": multicast interface: "+interfaceErr.Error())
+			continue
+		}
+		_ = conn.SetReadBuffer(128<<10)
+		_ = conn.SetWriteBuffer(32<<10)
+		connections=append(connections,multicastConn{name:iface.Name,conn:conn})
 	}
-	if len(connections)==0 {return nil,fmt.Errorf("找不到可用于 mDNS 的局域网网卡")}
+	if len(connections)==0 {
+		return nil,fmt.Errorf("N1 没有可用的 IPv4 mDNS 组播网卡（%s）",strings.Join(setupFailures,"; "))
+	}
+	defer func(){for _,entry:=range connections{_ = entry.conn.Close()}}()
 
-	defer func(){for _,conn:=range connections{_ = conn.Close()}}()
-	packets:=make(chan []byte,64)
-	for _,conn:=range connections {
+	// Use a plain child context and a separate timer. A context deadline and a
+	// timer with the same duration race in select and used to turn normal scan
+	// completion into a spurious deadline error.
+	scanCtx,cancel:=context.WithCancel(ctx)
+	defer cancel()
+	packets:=make(chan []byte,128)
+	for _,entry:=range connections {
 		go func(c *net.UDPConn) {
 			buffer:=make([]byte,9000)
 			for {
@@ -111,48 +137,114 @@ func (s *Service) Discover(ctx context.Context, duration time.Duration) ([]Devic
 				n,_,readErr:=c.ReadFromUDP(buffer)
 				if readErr!=nil {
 					if ne,ok:=readErr.(net.Error);ok && ne.Timeout() {
-						select {case <-ctx.Done():return;default:continue}
+						select {case <-scanCtx.Done():return;default:continue}
 					}
 					return
 				}
 				packet:=append([]byte(nil),buffer[:n]...)
-				select {case packets<-packet:case <-ctx.Done():return}
+				select {case packets<-packet:case <-scanCtx.Done():return}
 			}
-		}(conn)
+		}(entry.conn)
 	}
 
-	query:=buildPTRQuery(serviceType)
+	type dnsQuery struct { name string; qtype uint16 }
+	state:=newDiscoveryState()
+	queryAttempts:=0
+	sendQueries:=func() error {
+		queries:=[]dnsQuery{{name:serviceType,qtype:12}}
+		seen:=map[string]bool{serviceType+"/12":true}
+		addQuery:=func(name string,qtype uint16) {
+			key:=name+"/"+fmt.Sprint(qtype)
+			if name!="" && !seen[key] {seen[key]=true;queries=append(queries,dnsQuery{name:name,qtype:qtype})}
+		}
+		instances:=make([]string,0,len(state.instances))
+		for instance:=range state.instances {instances=append(instances,instance)}
+		sort.Strings(instances)
+		for _,instance:=range instances {
+			// A PTR answer is not guaranteed to carry SRV/TXT/A in the same
+			// packet. Query the service instance explicitly, as NsdManager does.
+			addQuery(instance,33) // SRV
+			addQuery(instance,16) // TXT
+		}
+		hosts:=make([]string,0,len(state.srvs))
+		hostSeen:=make(map[string]bool)
+		for _,srv:=range state.srvs {
+			if srv.host!="" && !hostSeen[srv.host] {hostSeen[srv.host]=true;hosts=append(hosts,srv.host)}
+		}
+		sort.Strings(hosts)
+		for _,host:=range hosts {
+			addQuery(host,1)  // A
+			addQuery(host,28) // AAAA
+		}
+		sent:=0
+		var firstErr error
+		for _,entry:=range connections {
+			for _,query:=range queries {
+				packet:=buildDNSQuery(query.name,query.qtype)
+				if _,writeErr:=entry.conn.WriteToUDP(packet,group);writeErr!=nil {
+					if firstErr==nil {firstErr=writeErr}
+					s.logger.Printf("mDNS query failed interface=%s name=%q type=%d error=%v",entry.name,query.name,query.qtype,writeErr)
+					continue
+				}
+				sent++
+				queryAttempts++
+			}
+		}
+		if sent==0 {
+			if firstErr!=nil {return fmt.Errorf("发送 mDNS 组播查询失败：%w",firstErr)}
+			return fmt.Errorf("没有向任何局域网网卡发送 mDNS 查询")
+		}
+		return nil
+	}
+	if err:=sendQueries();err!=nil {return nil,err}
+
 	ticker:=time.NewTicker(650*time.Millisecond)
 	defer ticker.Stop()
 	timer:=time.NewTimer(duration)
 	defer timer.Stop()
-	state:=newDiscoveryState()
-	send:=func(){
-		for _,conn:=range connections {_,_=conn.WriteToUDP(query,group)}
-	}
-	send()
+	received:=0
+	parseErrors:=0
+	lastParseError:=""
 loop:
 	for {
 		select {
 		case packet:=<-packets:
-			_ = parsePacket(packet,state)
+			received++
+			if parseErr:=parsePacket(packet,state);parseErr!=nil {
+				parseErrors++
+				lastParseError=parseErr.Error()
+			}
+			// Resolve newly learned PTR/SRV records immediately rather than
+			// assuming a single multicast response contains every RR.
+			if err:=sendQueries();err!=nil {
+				s.logger.Printf("mDNS follow-up query error: %v",err)
+			}
 		case <-ticker.C:
-			send()
+			if err:=sendQueries();err!=nil {
+				s.logger.Printf("mDNS retry query error: %v",err)
+			}
 		case <-timer.C:
 			break loop
-		case <-ctx.Done():
-			return nil,ctx.Err()
+		case <-scanCtx.Done():
+			return nil,scanCtx.Err()
 		}
 	}
+
 	devices:=state.devices()
 	s.mu.Lock()
 	now:=time.Now()
-	for id,seen:=range s.seenAt {if now.Sub(seen)>2*time.Minute {delete(s.seenAt,id);delete(s.devices,id)}}
-	for _,device:=range devices {s.devices[device.DeviceID]=device;s.seenAt[device.DeviceID]=now}
+	for id,seen:=range s.seenAt {
+		if now.Sub(seen)>2*time.Minute {delete(s.seenAt,id);delete(s.devices,id)}
+	}
+	for _,device:=range devices {
+		s.devices[device.DeviceID]=device
+		s.seenAt[device.DeviceID]=now
+	}
 	s.mu.Unlock()
+	s.logger.Printf("mDNS discovery finished interfaces=%d queries=%d packets=%d parse_errors=%d instances=%d srv=%d txt=%d addresses=%d devices=%d last_parse_error=%q",
+		len(connections),queryAttempts,received,parseErrors,len(state.instances),len(state.srvs),len(state.txt),len(state.addresses),len(devices),lastParseError)
 	return devices,nil
 }
-
 
 func setMulticastInterface(conn *net.UDPConn,iface net.Interface) error {
 	var ipv4 net.IP
@@ -259,12 +351,13 @@ func (s *Service) Handoff(ctx context.Context,request HandoffRequest)(HandoffRes
 	return HandoffResult{Accepted:reply.Accepted,Message:message,DeviceName:device.Name},nil
 }
 
-func buildPTRQuery(name string) []byte {
+func buildPTRQuery(name string) []byte { return buildDNSQuery(name,12) }
+
+func buildDNSQuery(name string,qtype uint16) []byte {
 	packet:=make([]byte,12)
-	packet[4]=0
-	packet[5]=1
+	packet[5]=1 // one question
 	packet=appendDNSName(packet,name)
-	packet=append(packet,0,12,0,1)
+	packet=append(packet,byte(qtype>>8),byte(qtype),0,1) // QTYPE, QCLASS=IN
 	return packet
 }
 
@@ -353,6 +446,12 @@ func parsePacket(packet []byte,state *discoveryState) error {
 			state.txt[name]=attrs
 		case 1: // A
 			if length==4 {state.addresses[name]=netip.AddrFrom4([4]byte{packet[dataStart],packet[dataStart+1],packet[dataStart+2],packet[dataStart+3]}).String()}
+		case 28: // AAAA; keep an IPv4 answer if one was already received.
+			if length==16 && state.addresses[name]=="" {
+				var address [16]byte
+				copy(address[:],packet[dataStart:offset])
+				state.addresses[name]=netip.AddrFrom16(address).String()
+			}
 		}
 		offset+=length
 	}

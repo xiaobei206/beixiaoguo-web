@@ -63,6 +63,7 @@ jobs:
             - 页面切换时恢复列表、分页游标和滚动位置，目录数据增加有限 RAM 缓存。
             - 播放器支持最高 3 倍速、上下滑动切集、上一集/下一集和自动连播。
             - 增加 N1 到 hongguoTV 的局域网发现与播放进度交接。
+            - mDNS 搜索按 PTR / SRV / TXT / A/AAAA 分阶段查询；图片代理安全跟随有限 CDN 重定向。
 
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`

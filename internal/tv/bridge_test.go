@@ -78,3 +78,46 @@ func TestMulticastInterfaceSelectionRequiresIPv4(t *testing.T) {
 		t.Fatal("expected interface without IPv4 address to be rejected")
 	}
 }
+
+
+func TestParseDNSDiscoveryRecordsAcrossPackets(t *testing.T) {
+	instance:="hongguoTV-4321._hongguotv._tcp.local."
+	host:="tv.local."
+	state:=newDiscoveryState()
+	packetWithOne:=func(record []byte) []byte {
+		packet:=make([]byte,12)
+		binary.BigEndian.PutUint16(packet[6:8],1)
+		return append(packet,record...)
+	}
+	// PTR arrives first, just as a normal DNS-SD browse notification does.
+	if err:=parsePacket(packetWithOne(rr(serviceType,12,dnsName(instance))),state);err!=nil {t.Fatal(err)}
+	if len(state.devices())!=0 {t.Fatal("device must not resolve before SRV/TXT/address")}
+	// SRV and TXT may be returned by separate follow-up queries/packets.
+	srv:=make([]byte,6)
+	binary.BigEndian.PutUint16(srv[4:6],43210)
+	srv=append(srv,dnsName(host)...)
+	if err:=parsePacket(packetWithOne(rr(instance,33,srv)),state);err!=nil {t.Fatal(err)}
+	txt:=[]byte{}
+	for _,value:=range []string{"deviceid=split-tv","label=书房电视","protocol=1"} {
+		txt=append(txt,byte(len(value)))
+		txt=append(txt,value...)
+	}
+	if err:=parsePacket(packetWithOne(rr(instance,16,txt)),state);err!=nil {t.Fatal(err)}
+	if err:=parsePacket(packetWithOne(rr(host,1,[]byte{192,168,60,88})),state);err!=nil {t.Fatal(err)}
+	devices:=state.devices()
+	if len(devices)!=1 {t.Fatalf("found %d devices after split records",len(devices))}
+	if devices[0].DeviceID!="split-tv" || devices[0].Host!="192.168.60.88" || devices[0].Port!=43210 {
+		t.Fatalf("unexpected split-packet device: %+v",devices[0])
+	}
+}
+
+func TestBuildDNSQueryTypes(t *testing.T) {
+	for _,qtype:=range []uint16{12,33,16,1,28} {
+		packet:=buildDNSQuery("tv.local.",qtype)
+		if len(packet)<16 || binary.BigEndian.Uint16(packet[4:6])!=1 ||
+			binary.BigEndian.Uint16(packet[len(packet)-4:len(packet)-2])!=qtype ||
+			binary.BigEndian.Uint16(packet[len(packet)-2:])!=1 {
+			t.Fatalf("invalid DNS query for type %d: %v",qtype,packet)
+		}
+	}
+}

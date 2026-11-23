@@ -58,7 +58,7 @@ func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 		client:    client,
 		media:     media.New(client, logger),
 		images:    imageproxy.New(logger),
-		tv:        tv.New(),
+		tv:        tv.New(logger),
 		version:   version,
 		logger:    logger,
 		slots:     make(chan struct{}, 4),
@@ -212,9 +212,11 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 func (s *Server) tvDevices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	devices, err := s.tv.Discover(ctx, 2600*time.Millisecond)
+	devices, err := s.tv.Discover(ctx, 3200*time.Millisecond)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "TV_DISCOVERY_FAILED", "N1 无法搜索局域网电视，请确认局域网支持 mDNS 组播", "")
+		id, _ := r.Context().Value(requestIDKey).(string)
+		s.logger.Printf("tv discovery request_id=%s error=%v",id,err)
+		writeError(w, http.StatusServiceUnavailable, "TV_DISCOVERY_FAILED", "N1 局域网电视搜索失败："+err.Error(), id)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": devices})

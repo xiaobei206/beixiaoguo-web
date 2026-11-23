@@ -55,33 +55,48 @@ type entry struct {
 func New(loggers ...*log.Logger) *Proxy {
 	logger:=log.Default()
 	if len(loggers)>0 && loggers[0]!=nil {logger=loggers[0]}
-	transport := &http.Transport{
-		Proxy: nil,
-		MaxIdleConns: 12,
-		MaxIdleConnsPerHost: 3,
-		MaxConnsPerHost: 4,
-		IdleConnTimeout: 45 * time.Second,
-		TLSHandshakeTimeout: 8 * time.Second,
-		ResponseHeaderTimeout: 12 * time.Second,
-		TLSClientConfig: &tls.Config{MinVersion:tls.VersionTLS12},
-		DialContext: safeDialContext(&net.Dialer{Timeout:8*time.Second,KeepAlive:30*time.Second}),
+	transport:=&http.Transport{
+		Proxy:nil,
+		MaxIdleConns:12,
+		MaxIdleConnsPerHost:3,
+		MaxConnsPerHost:4,
+		IdleConnTimeout:45*time.Second,
+		TLSHandshakeTimeout:8*time.Second,
+		ResponseHeaderTimeout:12*time.Second,
+		TLSClientConfig:&tls.Config{MinVersion:tls.VersionTLS12},
+		DialContext:safeDialContext(&net.Dialer{Timeout:8*time.Second,KeepAlive:30*time.Second}),
 	}
-	return &Proxy{
+	p:=&Proxy{
 		logger:logger,
-		client:&http.Client{
-			Transport:transport,
-			Timeout:25*time.Second,
-			CheckRedirect:func(_ *http.Request,_ []*http.Request)error{return http.ErrUseLastResponse},
-		},
 		validate:validateURL,
 		byToken:make(map[string]*entry),
 		bySource:make(map[string]string),
 	}
+	p.client=&http.Client{
+		Transport:transport,
+		Timeout:25*time.Second,
+		CheckRedirect:func(req *http.Request,via []*http.Request)error {
+			if len(via)>=5 {return fmt.Errorf("too many image CDN redirects")}
+			if len(via)>0 && via[len(via)-1].URL.Scheme=="https" && req.URL.Scheme!="https" {
+				return fmt.Errorf("image CDN redirect attempted HTTPS downgrade")
+			}
+			if err:=p.validate(req.URL);err!=nil {return fmt.Errorf("unsafe image CDN redirect: %w",err)}
+			return nil
+		},
+	}
+	return p
 }
 
 func (p *Proxy) Register(raw string) string {
 	u,err:=url.Parse(strings.TrimSpace(raw))
-	if err!=nil || p.validate(u)!=nil {return ""}
+	if err!=nil {
+		p.logger.Printf("image source rejected reason=url_parse_error")
+		return ""
+	}
+	if validationErr:=p.validate(u);validationErr!=nil {
+		p.logger.Printf("image source rejected host=%q reason=%v",u.Hostname(),validationErr)
+		return ""
+	}
 	canonical:=strings.ToLower(u.Scheme)+"://"+strings.ToLower(u.Host)+u.EscapedPath()
 	if canonical=="" {return ""}
 	sum:=sha256.Sum256([]byte(canonical))
@@ -192,7 +207,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 		if err!=nil {
 			host:=""
 			if u,parseErr:=url.Parse(source);parseErr==nil {host=u.Hostname()}
-			p.logger.Printf("image proxy failed host=%q error_type=%T",host,err)
+			p.logger.Printf("image proxy failed source_host=%q error=%q",host,err.Error())
 			http.Error(w,"cover image temporarily unavailable",http.StatusBadGateway)
 			return
 		}
@@ -227,24 +242,29 @@ func (p *Proxy) fetch(ctx context.Context,item *entry,raw string)([]byte,string,
 	if err!=nil || p.validate(u)!=nil {return nil,"","",fmt.Errorf("invalid cover source")}
 	req,err:=http.NewRequestWithContext(ctx,http.MethodGet,raw,nil)
 	if err!=nil {return nil,"","",err}
-	req.Header.Set("Accept","image/jpeg,image/png,image/webp;q=0.9,image/avif;q=0.8,*/*;q=0.1")
-	req.Header.Set("User-Agent","Beixiaoguo/0.1.1 image-proxy")
+	req.Header.Set("Accept","image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
+	req.Header.Set("User-Agent","Beixiaoguo/0.1.2 image-proxy")
 	resp,err:=p.client.Do(req)
 	if err!=nil {return nil,"","",err}
 	defer resp.Body.Close()
 	if resp.StatusCode!=http.StatusOK {
-		return nil,"","",fmt.Errorf("cover server returned HTTP %d",resp.StatusCode)
+		finalHost:=""
+		if resp.Request!=nil && resp.Request.URL!=nil {finalHost=resp.Request.URL.Hostname()}
+		return nil,"","",fmt.Errorf("cover server returned HTTP %d after redirect (final_host=%q)",resp.StatusCode,finalHost)
 	}
 	body,err:=io.ReadAll(io.LimitReader(resp.Body,maxImageBytes+1))
 	if err!=nil {return nil,"","",err}
 	if len(body)==0 || len(body)>maxImageBytes {return nil,"","",fmt.Errorf("cover image size is invalid")}
 	contentType,_,_:=mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if !strings.HasPrefix(strings.ToLower(contentType),"image/") {
+	if contentType=="" || strings.EqualFold(contentType,"application/octet-stream") {
 		contentType=http.DetectContentType(body)
 	}
 	if !strings.HasPrefix(strings.ToLower(contentType),"image/") {
 		return nil,"","",fmt.Errorf("upstream response is not an image")
 	}
+	finalHost:=""
+	if resp.Request!=nil && resp.Request.URL!=nil {finalHost=resp.Request.URL.Hostname()}
+	p.logger.Printf("image proxy fetched source_host=%q final_host=%q content_type=%q bytes=%d",u.Hostname(),finalHost,contentType,len(body))
 	sum:=sha256.Sum256(body)
 	newETag:="\""+hex.EncodeToString(sum[:])+"\""
 

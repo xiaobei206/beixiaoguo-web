@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111116">
+  <meta name="description" content="贝小果：家庭局域网短剧浏览与播放">
+  <title>贝小果 · 短剧时间</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script defer src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="贝小果首页">
+        <span class="brand-mark"><i></i><i></i><i></i></span>
+        <span class="brand-name">贝小果</span>
+      </a>
+      <form id="search-form" class="search-box" role="search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="search-input" type="search" autocomplete="off" placeholder="搜一部想看的短剧…" aria-label="搜索短剧">
+        <button type="submit" aria-label="搜索">搜索</button>
+      </form>
+      <span class="lan-pill"><span></span> 家庭局域网</span>
+    </header>
+
+    <nav class="main-nav" aria-label="主导航">
+      <button class="nav-item active" data-view="discover">发现</button>
+      <button class="nav-item" data-view="rank">排行榜</button>
+      <button class="nav-item" data-view="new">新剧上线</button>
+      <button class="nav-item" data-view="hot">热搜</button>
+      <button class="nav-item" data-view="mine">我的收藏</button>
+    </nav>
+
+    <main>
+      <section id="welcome" class="welcome">
+        <div class="welcome-copy">
+          <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR HOME SHORT-DRAMA LIBRARY</div>
+          <h1>好故事，<em>接着看。</em></h1>
+          <p>在家打开贝小果，手机、平板和电脑都能自在浏览。</p>
+        </div>
+        <div class="welcome-art" aria-hidden="true">
+          <div class="art-orbit orbit-one"></div>
+          <div class="art-orbit orbit-two"></div>
+          <div class="art-berry">贝</div>
+          <div class="art-spark spark-one">✦</div>
+          <div class="art-spark spark-two">✧</div>
+        </div>
+      </section>
+
+      <section class="section-heading">
+        <div>
+          <div class="section-kicker" id="section-kicker">为你精选</div>
+          <h2 id="section-title">发现好剧</h2>
+          <p id="section-subtitle">从这里开始，找到下一部喜欢的故事。</p>
+        </div>
+        <button id="refresh-button" class="subtle-button" type="button">↻ <span>刷新</span></button>
+      </section>
+
+      <div id="status" class="status" role="status" aria-live="polite">正在连接片库…</div>
+      <section id="hero" class="feature-card" hidden></section>
+      <section id="series-grid" class="series-grid" aria-label="短剧列表"></section>
+      <div class="load-more-wrap">
+        <button id="load-more" class="load-more" type="button" hidden>加载更多</button>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>贝小果 <b>0.1.0</b></span>
+      <span>只在你的家庭网络中提供服务 · 浏览数据保存在当前浏览器</span>
+    </footer>
+  </div>
+
+  <dialog id="detail-dialog" class="detail-dialog">
+    <button id="dialog-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+    <div id="detail-content" class="detail-content"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

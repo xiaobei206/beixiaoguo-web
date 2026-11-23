@@ -304,7 +304,7 @@
     if (append && state.busy) return;
     if (!append) {
       const key = viewCacheKey(view);
-      if (state.activeViewKey && state.activeViewKey !== key) saveActiveView();
+      if (state.activeViewKey && state.activeViewKey !== key && state.view !== view) saveActiveView();
       state.loadSequence++;
       state.busy = false;
       setBusy(false);
@@ -344,6 +344,7 @@
     const activeKey = state.activeViewKey;
     setBusy(true);
     setStatus(append ? "正在加载下一页…" : "正在连接片库…");
+    let loadSucceeded = false;
     try {
       let data;
       let items = [];
@@ -421,6 +422,7 @@
         ? ("已载入 " + state.items.length + " 部" + (state.pageCount > 1 ? " · 第 " + state.pageCount + " 页" : ""))
         : "暂无内容");
       saveActiveView();
+      loadSucceeded = true;
     } catch (error) {
       if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
       setStatus(error.message || "加载失败", true);
@@ -433,7 +435,7 @@
         // then continue when the viewer comes within roughly one screen of the end.
         const scheduledView = state.view;
         const scheduledKey = state.activeViewKey;
-        if (state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
+        if (loadSucceeded && state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
           window.setTimeout(() => {
             if (state.view === scheduledView && state.activeViewKey === scheduledKey &&
                 !state.busy && state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
@@ -763,6 +765,7 @@
   $("#search-form").addEventListener("submit", (event) => {
     event.preventDefault();
     if (!$("#search-input").value.trim()) return;
+    saveActiveView();
     state.searchType = "all";
     loadView("search", false, true);
   });
@@ -774,6 +777,13 @@
     const kind = button.dataset.filterKind;
     const value = button.dataset.filterValue;
     if (!kind || value == null) return;
+    const changing =
+      (kind === "channel" && value !== state.discoverChannel) ||
+      (kind === "search-type" && value !== state.searchType) ||
+      (kind === "rank-content" && value !== state.rankContent) ||
+      (kind === "rank-board" && value !== state.rankBoard) ||
+      (kind === "new-date" && value !== state.newDate);
+    if (changing) saveActiveView();
     if (kind === "channel" && value !== state.discoverChannel) {
       state.discoverChannel = value;
       loadView("discover", false, true);

@@ -194,8 +194,7 @@ func (s *Service) Handoff(ctx context.Context,request HandoffRequest)(HandoffRes
 	}
 	body,err:=json.Marshal(payload)
 	if err!=nil {return HandoffResult{},err}
-	body=append(body,'
-')
+	body=append(body,10)
 	dialer:=net.Dialer{Timeout:4*time.Second}
 	conn,err:=dialer.DialContext(ctx,"tcp",net.JoinHostPort(device.Host,fmt.Sprint(device.Port)))
 	if err!=nil {return HandoffResult{},fmt.Errorf("连接电视失败：%w",err)}
@@ -212,8 +211,7 @@ func (s *Service) Handoff(ctx context.Context,request HandoffRequest)(HandoffRes
 	stopCancel:=context.AfterFunc(ctx,func(){_ = conn.Close()})
 	defer stopCancel()
 	reader:=bufio.NewReaderSize(io.LimitReader(conn,8193),8192)
-	line,err:=reader.ReadString('
-')
+	line,err:=reader.ReadString(10)
 	if err!=nil {return HandoffResult{},fmt.Errorf("电视没有返回投屏结果：%w",err)}
 	if len(line)>8192 {return HandoffResult{},fmt.Errorf("电视返回的数据超出限制")}
 	var reply struct {

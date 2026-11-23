@@ -147,3 +147,6 @@ main { min-height:65vh; }
   .welcome-copy { max-width:90%; }
   .series-grid { gap:17px 9px; }
 }
+
+.favorite-tag { left:auto; right:8px; }
+.detail-placeholder { width:100px; height:134px; border-radius:10px; flex:none; }

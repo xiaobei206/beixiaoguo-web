@@ -32,6 +32,8 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Resolve modules
+        run: go mod tidy
       - name: Test
         run: go test ./...
       - name: Check browser JavaScript syntax

@@ -221,13 +221,87 @@
         '<div class="detail-meta">' + escapeHTML(episodes.length + " 集") + '</div>' +
         '<p>' + escapeHTML(series.description || "暂无简介") + '</p>' +
         '<button id="favorite-toggle" class="load-more" type="button">' + (fav ? "♥ 已收藏" : "♡ 收藏这部剧") + '</button></div></div>' +
+        '<section id="playback-panel" class="playback-panel" hidden>' +
+        '<div class="player-toolbar"><span id="player-caption">正在准备播放…</span>' +
+        '<label class="quality-control">画质 <select id="player-quality" aria-label="播放画质"><option value="best">自动</option></select></label>' +
+        '<button id="player-close" class="player-close" type="button">收起</button></div>' +
+        '<video id="web-player" controls playsinline webkit-playsinline preload="metadata"></video>' +
+        '<div id="playback-status" class="playback-status" role="status">选择集数开始播放</div></section>' +
         '<h3 class="episode-heading">选集</h3><div class="episode-grid">' +
-        episodes.map((ep) => '<button class="episode-chip" type="button" disabled title="播放器尚未接入">' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
-        '</div><div class="player-note">当前版本已接通片库浏览与剧集详情。视频播放模块正在开发：目标是由 N1 Go 服务端进行 CENC 按需解密和 HTTP Range 转发，不下载整集，也不做视频转码。</div>';
+        episodes.map((ep) => '<button class="episode-chip" type="button" data-episode-id="' + escapeHTML(ep.id) + '" data-episode-number="' + escapeHTML(ep.number || "") + '"' + (ep.playable === false ? ' disabled title="当前分集不可播放"' : '') + '>' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
+        '</div><div class="player-note">视频由 N1 按 HTTP Range 按需读取与解密，不下载整集、不转码。画中画、横屏和硬件解码能力由当前浏览器与设备决定。</div>';
 
       $("#favorite-toggle").addEventListener("click", () => toggleFavorite(normalize(series)));
+      body.querySelector(".episode-grid").addEventListener("click", (event) => {
+        const button = event.target.closest(".episode-chip");
+        if (!button || button.disabled) return;
+        startPlayback(button.dataset.episodeId, button.dataset.episodeNumber, series.title || "贝小果短剧");
+      });
+      $("#player-close").addEventListener("click", () => {
+        const video = $("#web-player");
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        $("#playback-panel").hidden = true;
+      });
     } catch (error) {
       body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") + '</div>';
+    }
+  }
+
+  async function startPlayback(episodeId, episodeNumber, seriesTitle, quality, resumeAt) {
+    const panel = $("#playback-panel");
+    const video = $("#web-player");
+    const status = $("#playback-status");
+    const caption = $("#player-caption");
+    const qualitySelect = $("#player-quality");
+    panel.hidden = false;
+    caption.textContent = (seriesTitle || "短剧") + " · 第 " + (episodeNumber || "?") + " 集";
+    status.textContent = "正在解析播放地址…";
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+
+    try {
+      const chosen = quality || "best";
+      const info = await request("/api/v1/play/" + encodeURIComponent(episodeId) + "?quality=" + encodeURIComponent(chosen));
+      qualitySelect.innerHTML = (info.available_qualities || []).map((item) =>
+        '<option value="' + escapeHTML(item.label) + '">' + escapeHTML(item.label) + (item.codec ? " · " + escapeHTML(item.codec) : "") + '</option>'
+      ).join("");
+      if (!qualitySelect.options.length) {
+        qualitySelect.innerHTML = '<option value="best">自动</option>';
+      }
+      qualitySelect.value = info.quality || chosen;
+      qualitySelect.onchange = () => {
+        const position = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+        startPlayback(episodeId, episodeNumber, seriesTitle, qualitySelect.value, position);
+      };
+
+      status.textContent = "已取得 " + (info.quality || "自动") + " 播放流" +
+        (info.protected ? " · N1 正在按需解密" : " · 明文 MP4") +
+        "。正在连接视频…";
+      const target = Math.max(0, Number(resumeAt) || 0);
+      if (target > 0) {
+        video.addEventListener("loadedmetadata", () => {
+          try { video.currentTime = Math.min(target, Math.max(0, video.duration - 1)); } catch (_) {}
+        }, {once:true});
+      }
+      video.onerror = () => {
+        const code = video.error ? video.error.code : 0;
+        status.textContent = "浏览器无法播放此视频（媒体错误 " + code + "）。可尝试切换画质或使用其他浏览器。";
+      };
+      video.src = info.src;
+      video.load();
+      try {
+        await video.play();
+        status.textContent = "正在播放 · " + (info.quality || "自动") +
+          (document.pictureInPictureEnabled ? " · 支持画中画" : "");
+      } catch (_) {
+        status.textContent = "播放地址已就绪，点击视频播放键开始。";
+      }
+    } catch (error) {
+      status.textContent = error.message || "播放初始化失败";
+      showToast(error.message || "播放初始化失败");
     }
   }
 

@@ -677,6 +677,7 @@ func safeDialContext(dialer *net.Dialer) func(context.Context, string, string) (
 		}
 		if net.ParseIP(host) != nil {
 			ip, _ := netip.ParseAddr(host)
+			ip = ip.Unmap()
 			if !isPublicIP(ip) {
 				return nil, fmt.Errorf("blocked connection to non-public IP")
 			}
@@ -691,13 +692,18 @@ func safeDialContext(dialer *net.Dialer) func(context.Context, string, string) (
 		}
 		for _, candidate := range ips {
 			ip, ok := netip.AddrFromSlice(candidate.IP)
-			if !ok || !isPublicIP(ip) {
+			if !ok {
+				return nil, fmt.Errorf("invalid DNS response address")
+			}
+			ip = ip.Unmap()
+			if !isPublicIP(ip) {
 				return nil, fmt.Errorf("blocked DNS response containing a non-public IP")
 			}
 		}
 		var lastErr error
 		for _, candidate := range ips {
-			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+			ip, _ := netip.AddrFromSlice(candidate.IP)
+			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.Unmap().String(), port))
 			if dialErr == nil {
 				return conn, nil
 			}

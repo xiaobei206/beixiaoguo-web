@@ -10,7 +10,7 @@
        ├─ embed.FS 静态站点
        ├─ REST API
        ├─ openhongguo Go SDK
-       ├─ CENC Range 媒体代理（后续阶段）
+       ├─ CENC Range 媒体代理
        └─ mDNS / hongguoTV 接力（后续阶段）
           │
           ├──────── 红果接口 / CDN
@@ -46,9 +46,9 @@
 
 依赖固定到 \`xiaobei206/openhongguo\` Fork 的提交 \`bc620c4678c1\`。Go module 内部声明路径仍为 \`github.com/beilunyang/openhongguo\`，因此使用 go.mod replace 指向该 Fork。
 
-## 视频播放计划（尚未实现）
+## 视频播放链路（第一版已接通）
 
-目标链路：
+当前链路：
 
 1. Go 服务端调用 \`ResolvePlayback\` 取得播放模型，并用 \`ContentKey\` 在服务端取得 CENC 内容密钥。
 2. 仅接受经过校验的上游 HTTPS 媒体地址，处理 Range 与上游响应头。
@@ -56,7 +56,7 @@
 4. 向浏览器返回正确的 Range / Content-Range / Content-Length。
 5. seek 时按需重新读取，不下载整集，不把内容密钥返回浏览器。
 
-不能简单地对任意 HTTP Range 字节直接 AES 解密：CENC 需要正确解析 MP4 box、sample offset 与 subsample encryption 信息。正式实现前必须用已知测试样本验证随机 seek、跨 sample Range、最后一个字节以及并发读取。
+不能简单地对任意 HTTP Range 字节直接 AES 解密：CENC 需要正确解析 MP4 box、sample offset 与 subsample encryption 信息。Go CENC 包已覆盖 senc、subsample、saiz/saio、moov 位于 mdat 后、随机切片和并发读取的合成 MP4 测试；仍需使用真实授权测试样本验证实际 CDN 文件布局。
 
 第一阶段不做 FFmpeg 转码。浏览器硬件解码兼容性按设备测试；不能播放的编码格式后续再评估可选方案。
 

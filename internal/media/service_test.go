@@ -133,3 +133,22 @@ func TestFetchBytesUsesExactRange(t *testing.T) {
 	if err!=nil { t.Fatal(err) }
 	if total!=100 || !bytes.Equal(data,payload[10:30]) { t.Fatalf("unexpected body length=%d total=%d",len(data),total) }
 }
+
+
+func TestValidatePublicURLRejectsLocalAndNonHTTPS(t *testing.T) {
+	for _, raw := range []string{
+		"http://example.com/video.mp4",
+		"https://127.0.0.1/video.mp4",
+		"https://192.168.1.2/video.mp4",
+		"https://localhost/video.mp4",
+		"https://example.com:8443/video.mp4",
+		"https://user:pass@example.com/video.mp4",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil { t.Fatal(err) }
+		if err := validatePublicURL(u); err == nil { t.Errorf("accepted unsafe URL %q", raw) }
+	}
+	if err := validatePublicURL(&url.URL{Scheme:"https", Host:"cdn.example.com", Path:"/media.mp4"}); err != nil {
+		t.Errorf("rejected public HTTPS URL: %v", err)
+	}
+}

@@ -13,12 +13,12 @@
 - 面向 N1 / iStoreOS / ARM64，以单一静态 Go 二进制部署。
 - 静态网页通过 `embed.FS` 嵌入程序，不需要 Node.js 运行时或数据库。
 - 默认把 SDK 匿名设备档案保存在进程内存，不写 TF 卡；服务重启后需要重新注册匿名设备。
-- 播放链路目标是 CENC AES-CTR 按需解密与 HTTP Range 转发，不做整片下载、不做 N1 视频转码。
+- 播放链路已接入 CENC AES-CTR 按需解密与 HTTP Range 转发，不做整片下载、不做 N1 视频转码。
 - 通过 N1 后端发现局域网内 hongguoTV，并复用现有一次性交接协议。
 
 ## 开发状态
 
-第一阶段先建立稳定的服务端、浏览目录 API、响应式网页和 ARM64 构建。播放器、CENC Range 代理、电视发现/接力会在接口和协议核对完成后分阶段接入；未完成的能力不会在 UI 中伪装成可用功能。
+当前已接通片库浏览、剧集详情、分集选集与单文件 MP4 播放链路。HLS/DASH、观看历史同步、电视发现/接力仍在后续阶段；未完成的能力不会在 UI 中伪装成可用功能。
 
 ## 本地运行
 
@@ -53,6 +53,8 @@ chmod +x beixiaoguo-linux-arm64
 |---|---|---|
 | `BEIXIAOGUO_ADDR` | `0.0.0.0:8780` | HTTP 监听地址 |
 | `BEIXIAOGUO_VERSION` | 构建注入 | 版本信息 |
+
+播放 API：`GET /api/v1/play/{episodeID}?quality=720p` 返回同源媒体地址；浏览器随后使用 `GET /api/v1/media/{token}` 和标准 `Range` 请求播放。令牌、上游 URL 与 CENC 密钥仅保存在服务端内存。
 
 ## 文档
 

@@ -131,18 +131,24 @@ func makeMoov(clear bool, kind infoKind, sizes []int, ivs [][]byte, subs [][]sub
 	stszBody := append(u32(0),u32(int64(n))...)
 	for _,size := range sizes { stszBody=append(stszBody,u32(int64(size))...) }
 	stsz := fullBox("stsz",stszBody)
-	first:=5
-	stscBody:=append(u32(2),u32(1)...)
+	first:=min(5,n)
+	chunkCount:=1
+	if n>first { chunkCount=2 }
+	stscBody:=append(u32(int64(chunkCount)),u32(1)...)
 	stscBody=append(stscBody,u32(int64(first))...)
 	stscBody=append(stscBody,u32(1)...)
-	stscBody=append(stscBody,u32(2)...)
-	stscBody=append(stscBody,u32(int64(n-first))...)
-	stscBody=append(stscBody,u32(1)...)
+	if chunkCount==2 {
+		stscBody=append(stscBody,u32(2)...)
+		stscBody=append(stscBody,u32(int64(n-first))...)
+		stscBody=append(stscBody,u32(1)...)
+	}
 	stsc:=fullBox("stsc",stscBody)
-	second:=chunkAt
-	for _,s:=range sizes[:first] { second+=int64(s) }
-	stcoBody:=append(u32(2),u32(chunkAt)...)
-	stcoBody=append(stcoBody,u32(second)...)
+	stcoBody:=append(u32(int64(chunkCount)),u32(chunkAt)...)
+	if chunkCount==2 {
+		second:=chunkAt
+		for _,s:=range sizes[:first] { second+=int64(s) }
+		stcoBody=append(stcoBody,u32(second)...)
+	}
 	stco:=fullBox("stco",stcoBody)
 
 	var protection []byte

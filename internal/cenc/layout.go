@@ -499,7 +499,7 @@ func readInfo(t *track, b []byte, base, length int, n int64, subsamples bool, si
 			t.subs[k] = make([]subsample, m)
 			for j := 0; j < m; j++ {
 				t.subs[k][j] = subsample{
-					clear:     be16(b, base+p),
+					clear:     int64(be16(b, base+p)),
 					encrypted: be32(b, base+p+2),
 				}
 				p += 6

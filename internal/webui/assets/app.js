@@ -105,7 +105,7 @@
       return '<article class="series-card" tabindex="0" role="button" data-id="' + escapeHTML(data.id) + '" aria-label="查看 ' + escapeHTML(data.title) + '">' +
         '<div class="poster-wrap">' +
         (cover ? '<img loading="lazy" src="' + escapeHTML(cover) + '" alt="' + escapeHTML(data.title) + '">' : '<div class="poster-placeholder">贝</div>') +
-        tag + (fav ? '<span class="poster-tag" style="left:auto;right:8px">♥</span>' : "") +
+        tag + (fav ? '<span class="poster-tag favorite-tag">♥</span>' : "") +
         '</div><h3 class="card-title">' + escapeHTML(data.title) + '</h3>' +
         '<div class="card-meta">' + escapeHTML(data.episode_count ? data.episode_count + " 集" : data.heat || "短剧") + '</div>' +
         '</article>';
@@ -215,7 +215,7 @@
       const fav = state.favorites.some((entry) => entry.id === id);
       body.innerHTML =
         '<div class="detail-hero">' +
-        (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder" style="width:100px;height:134px;border-radius:10px">贝</div>') +
+        (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder detail-placeholder">贝</div>') +
         '<div class="detail-copy"><div class="detail-meta">' + escapeHTML(series.right_text || series.subtitles || "贝小果片库") + '</div>' +
         '<h2>' + escapeHTML(series.title || "短剧详情") + '</h2>' +
         '<div class="detail-meta">' + escapeHTML(episodes.length + " 集") + '</div>' +

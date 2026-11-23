@@ -11,7 +11,8 @@
        ├─ REST API
        ├─ openhongguo Go SDK
        ├─ CENC Range 媒体代理
-       └─ mDNS / hongguoTV 接力（后续阶段）
+       ├─ 同源图片代理 / RAM 缓存
+       └─ mDNS / hongguoTV 接力
           │
           ├──────── 红果接口 / CDN
           └──────── 家庭 LAN 内 hongguoTV
@@ -41,8 +42,11 @@
 | GET | \`/api/v1/series/{id}/episodes\` | 分集列表 |
 | GET | `/api/v1/play/{episodeID}?quality=` | 解析播放模型并创建短时媒体会话 |
 | GET / HEAD | `/api/v1/media/{token}` | HTTP Range 媒体代理与 CENC 按需解密 |
+| GET | `/api/v1/images/{token}` | 同源封面代理、RAM 缓存和 ETag |
+| GET | `/api/v1/tv/devices` | mDNS 搜索 hongguoTV protocol v1 设备 |
+| POST | `/api/v1/tv/handoff` | 将剧集、集数和播放位置交给指定电视 |
 
-前端收藏保存在当前浏览器的 localStorage，不上传到 N1；不同设备的收藏暂不互通。
+前端收藏保存在当前浏览器的 localStorage，不上传到 N1；不同设备的收藏暂不互通。目录 API 在 N1 RAM 内做有限 TTL 缓存，浏览器则在页面切换时保留每个列表、分页游标和滚动位置。
 
 ## SDK
 
@@ -62,10 +66,19 @@
 
 第一阶段不做 FFmpeg 转码。浏览器硬件解码兼容性按设备测试；不能播放的编码格式后续再评估可选方案。
 
-## 电视接力计划（尚未实现）
+## 电视接力（第一版已接通，待实机验收）
 
-复用 \`hongguoTV\` 已有的 \`_hongguotv._tcp.\` DNS-SD 服务与 protocol v1 JSON-line TCP 一次性交接协议。浏览器不直接使用 raw TCP 或 mDNS；由 N1 Go 服务端负责发现和发送指令，浏览器只调用同源 HTTP API。若局域网组播不可用，再提供手工 IP/端口备用入口。
+复用 \`hongguoTV\` 已有的 \`_hongguotv._tcp.\` DNS-SD 服务与 protocol v1 JSON-line TCP 一次性交接协议。浏览器不直接使用 raw TCP 或 mDNS；由 N1 Go 服务端查询 `_hongguotv._tcp.local.`，读取 TXT / SRV / A 记录，并通过 TCP 发送 JSON-line protocol v1。请求包含 `protocol=1`、`type=play`、`transferId`、`targetDeviceId`、`seriesId`、`episode` 和 `positionMs`；收到回执后校验 transferId 和 deviceId。浏览器只调用同源 HTTP API。若局域网组播不可用，再提供手工 IP/端口备用入口。
 
 ## 部署
 
 N1 默认监听 \`0.0.0.0:8780\`，通过 \`BEIXIAOGUO_ADDR\` 修改。运行时不需要写入项目目录；若设备重启，进程内匿名档案会丢失并重新注册。
+
+
+## 图片和目录缓存
+
+- 图片 token 由 N1 随机生成；仅来自 SDK 目录/详情响应里的图片 URL 才会被注册，浏览器不传入任意目标 URL。
+- 图片源只允许公开 HTTP/HTTPS 的 80/443 端口，解析 DNS 后拒绝私网、回环、链路本地和共享地址；禁用重定向。
+- N1 图片缓存上限约 96 MiB，单张最多 8 MiB，缓存 12 小时；内存压力时按最近使用情况淘汰。缓存不写入 TF 卡。
+- 列表/搜索/榜单/详情 API 的结果按 operation 做 RAM TTL 缓存，最多 192 项、16 MiB；播放解析不缓存。
+- 浏览器页面切换时恢复已访问页面的列表、分页游标和滚动位置；刷新按钮会强制重新请求。

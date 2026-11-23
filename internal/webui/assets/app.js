@@ -9,7 +9,11 @@
     busy: false,
     items: [],
     favorites: loadFavorites(),
-    toastTimer: 0
+    toastTimer: 0,
+    viewCache: Object.create(null),
+    activeViewKey: "",
+    loadSequence: 0,
+    playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0}
   };
 
   const navLabels = {
@@ -29,7 +33,7 @@
 
   function safeImage(value) {
     const url = String(value || "");
-    return /^https:\/\//i.test(url) ? url : "";
+    return /^\/api\/v1\/images\/[a-f0-9]{32}$/i.test(url) ? url : "";
   }
 
   function loadFavorites() {
@@ -57,8 +61,10 @@
     state.toastTimer = window.setTimeout(() => el.classList.remove("show"), 2400);
   }
 
-  async function request(path) {
-    const response = await fetch(path, {headers: {"Accept":"application/json"}});
+  async function request(path, options) {
+    options = options || {};
+    const headers = Object.assign({"Accept":"application/json"}, options.headers || {});
+    const response = await fetch(path, Object.assign({}, options, {headers}));
     const payload = await response.json();
     if (!response.ok) {
       const err = payload && payload.error ? payload.error : {};
@@ -138,23 +144,78 @@
     $("#load-more").textContent = busy ? "正在加载…" : "加载更多";
   }
 
-  async function loadView(view, append) {
-    if (state.busy) return;
+  function viewCacheKey(view) {
+    return view === "search" ? "search:" + $("#search-input").value.trim() : view;
+  }
+
+  function saveActiveView() {
+    if (!state.activeViewKey || state.view === "mine" || !state.items.length) return;
+    state.viewCache[state.activeViewKey] = {
+      items: state.items.slice(),
+      cursor: state.cursor,
+      hasMore: state.hasMore,
+      scrollY: window.scrollY,
+      savedAt: Date.now()
+    };
+    const keys = Object.keys(state.viewCache);
+    if (keys.length > 12) {
+      keys.sort((a, b) => state.viewCache[a].savedAt - state.viewCache[b].savedAt);
+      delete state.viewCache[keys[0]];
+    }
+  }
+
+  function restoreView(view, key, cached) {
+    state.view = view;
+    state.activeViewKey = key;
+    state.items = cached.items.slice();
+    state.cursor = cached.cursor;
+    state.hasMore = cached.hasMore;
+    setHeading(view);
+    renderCards(state.items);
+    if (view === "discover") renderHero(state.items);
+    else $("#hero").hidden = true;
+    $("#load-more").hidden = !state.hasMore;
+    setStatus("已从页面缓存恢复 · " + state.items.length + " 部");
+    window.requestAnimationFrame(() => window.scrollTo({top:cached.scrollY || 0,behavior:"auto"}));
+  }
+
+  async function loadView(view, append, force) {
+    if (append && state.busy) return;
     if (!append) {
+      const key = viewCacheKey(view);
+      if (state.activeViewKey && state.activeViewKey !== key) saveActiveView();
+      state.loadSequence++;
+      state.busy = false;
+      setBusy(false);
       state.view = view;
+      state.activeViewKey = key;
+      setHeading(view);
+
+      if (view === "mine") {
+        state.cursor = "";
+        state.hasMore = false;
+        state.items = [];
+        renderCards(state.favorites);
+        $("#load-more").hidden = true;
+        $("#hero").hidden = true;
+        setStatus(state.favorites.length ? "收藏保存在当前浏览器，不会上传到 N1。" : "还没有收藏的短剧。打开剧集详情即可收藏。");
+        return;
+      }
+
+      const cached = state.viewCache[key];
+      if (!force && cached) {
+        restoreView(view, key, cached);
+        return;
+      }
       state.cursor = "";
       state.hasMore = false;
       state.items = [];
-      setHeading(view);
       $("#hero").hidden = true;
       $("#series-grid").innerHTML = "";
     }
-    if (view === "mine") {
-      renderCards(state.favorites);
-      $("#load-more").hidden = true;
-      setStatus(state.favorites.length ? "收藏保存在当前浏览器，不会上传到 N1。" : "还没有收藏的短剧。打开剧集详情即可收藏。");
-      return;
-    }
+
+    const loadID = ++state.loadSequence;
+    const activeKey = state.activeViewKey;
     setBusy(true);
     setStatus(append ? "正在加载下一页…" : "正在连接片库…");
     try {
@@ -183,19 +244,22 @@
         const boards = (data.boards || []).flatMap((board) => board.items || []);
         items = (data.guesses || []).concat(boards);
       }
+      if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
       const mapped = items.map(normalize).filter((item) => item.id);
       state.items = append ? state.items.concat(mapped) : mapped;
-      state.cursor = data.cursor || "";
+      state.cursor = data.cursor || data.next_cursor || "";
       state.hasMore = !!data.has_more && !!state.cursor;
       renderCards(state.items);
       if (!append && view === "discover") renderHero(state.items);
       $("#load-more").hidden = !state.hasMore;
       setStatus(state.items.length ? ("已载入 " + state.items.length + " 部") : "暂无内容");
+      saveActiveView();
     } catch (error) {
+      if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
       setStatus(error.message || "加载失败", true);
       if (!append) $("#series-grid").innerHTML = '<div class="empty-state">片库暂时没有响应。<br>请检查 N1 网络后点击刷新。</div>';
     } finally {
-      setBusy(false);
+      if (loadID === state.loadSequence) setBusy(false);
     }
   }
 
@@ -220,75 +284,173 @@
         request("/api/v1/series/" + encodeURIComponent(id) + "/episodes")
       ]);
       const episodes = episodePage.items || [];
+      const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);
       const fav = state.favorites.some((entry) => entry.id === id);
+      state.playback = {seriesId:id,seriesTitle:title,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0};
       body.innerHTML =
         '<div class="detail-hero">' +
         (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder detail-placeholder">贝</div>') +
         '<div class="detail-copy"><div class="detail-meta">' + escapeHTML(series.right_text || series.subtitles || "贝小果片库") + '</div>' +
-        '<h2>' + escapeHTML(series.title || "短剧详情") + '</h2>' +
+        '<h2>' + escapeHTML(title) + '</h2>' +
         '<div class="detail-meta">' + escapeHTML(episodes.length + " 集") + '</div>' +
         '<p>' + escapeHTML(series.description || "暂无简介") + '</p>' +
         '<button id="favorite-toggle" class="load-more" type="button">' + (fav ? "♥ 已收藏" : "♡ 收藏这部剧") + '</button></div></div>' +
         '<section id="playback-panel" class="playback-panel" hidden>' +
         '<div class="player-toolbar"><span id="player-caption">正在准备播放…</span>' +
         '<label class="quality-control">画质 <select id="player-quality" aria-label="播放画质"><option value="best">自动</option></select></label>' +
+        '<label class="quality-control">倍速 <select id="player-speed" aria-label="播放速度">' +
+        '<option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>' +
+        '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>' +
+        '<option value="2.5">2.5×</option><option value="3">3×</option></select></label>' +
+        '<button id="player-cast" class="player-action" type="button" title="投屏到 hongguoTV">投屏</button>' +
+        '<button id="player-fullscreen" class="player-action" type="button">全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
-        '<video id="web-player" controls playsinline webkit-playsinline preload="metadata"></video>' +
+        '<div id="player-stage" class="player-stage"><video id="web-player" controls playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
+        '<div class="swipe-hint">上滑下一集 · 下滑上一集</div></div>' +
+        '<div class="player-nav"><button id="player-prev" type="button">上一集</button><button id="player-next" type="button">下一集</button></div>' +
         '<div id="playback-status" class="playback-status" role="status">选择集数开始播放</div></section>' +
         '<h3 class="episode-heading">选集</h3><div class="episode-grid">' +
         episodes.map((ep) => '<button class="episode-chip" type="button" data-episode-id="' + escapeHTML(ep.id) + '" data-episode-number="' + escapeHTML(ep.number || "") + '"' + (ep.playable === false ? ' disabled title="当前分集不可播放"' : '') + '>' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
-        '</div><div class="player-note">视频由 N1 按 HTTP Range 按需读取与解密，不下载整集、不转码。画中画、横屏和硬件解码能力由当前浏览器与设备决定。</div>';
+        '</div><div class="player-note">支持 0.5–3 倍速、上下滑切集和自动连播。视频仍由 N1 按需读取与解密；投屏通过局域网交给 hongguoTV。</div>';
 
       $("#favorite-toggle").addEventListener("click", () => toggleFavorite(normalize(series)));
       body.querySelector(".episode-grid").addEventListener("click", (event) => {
         const button = event.target.closest(".episode-chip");
         if (!button || button.disabled) return;
-        startPlayback(button.dataset.episodeId, button.dataset.episodeNumber, series.title || "贝小果短剧");
+        const index = episodes.findIndex((ep) => String(ep.id) === button.dataset.episodeId);
+        if (index >= 0) playEpisodeAt(index);
       });
       $("#player-close").addEventListener("click", () => {
-        const video = $("#web-player");
-        video.pause();
-        video.removeAttribute("src");
-        video.load();
+        stopPlayback();
         $("#playback-panel").hidden = true;
+      });
+      $("#player-prev").addEventListener("click", () => changeEpisode(-1));
+      $("#player-next").addEventListener("click", () => changeEpisode(1));
+      $("#player-cast").addEventListener("click", openCastPicker);
+      $("#player-speed").addEventListener("change", (event) => {
+        state.playback.speed = Number(event.target.value) || 1;
+        $("#web-player").playbackRate = state.playback.speed;
+      });
+      $("#player-quality").addEventListener("change", () => {
+        const video = $("#web-player");
+        const position = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+        startPlayback(state.playback.index, $("#player-quality").value, position);
+      });
+      const video = $("#web-player");
+      video.addEventListener("ended", () => {
+        if (state.playback.index >= 0) {
+          const next = findPlayableEpisode(state.playback.index, 1);
+          if (next >= 0) {
+            showToast("本集播放完毕，自动播放下一集");
+            playEpisodeAt(next);
+          } else {
+            $("#playback-status").textContent = "本剧已播放完毕";
+          }
+        }
+      });
+      let touchStart = null;
+      $("#player-stage").addEventListener("touchstart", (event) => {
+        if (event.touches.length !== 1) return;
+        touchStart = {x:event.touches[0].clientX,y:event.touches[0].clientY};
+      }, {passive:true});
+      $("#player-stage").addEventListener("touchend", (event) => {
+        if (!touchStart || !event.changedTouches.length) return;
+        const dx = event.changedTouches[0].clientX - touchStart.x;
+        const dy = event.changedTouches[0].clientY - touchStart.y;
+        touchStart = null;
+        if (Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;
+        changeEpisode(dy < 0 ? 1 : -1);
+      }, {passive:true});
+      $("#player-fullscreen").addEventListener("click", async () => {
+        const panel = $("#playback-panel");
+        const button = $("#player-fullscreen");
+        if (panel.classList.contains("manual-fullscreen")) {
+          panel.classList.remove("manual-fullscreen");
+          button.textContent = "全屏";
+          return;
+        }
+        try {
+          if (panel.requestFullscreen) {
+            await panel.requestFullscreen();
+          } else {
+            panel.classList.add("manual-fullscreen");
+            button.textContent = "退出全屏";
+          }
+        } catch (_) {
+          panel.classList.add("manual-fullscreen");
+          button.textContent = "退出全屏";
+        }
+      });
+      document.addEventListener("fullscreenchange", () => {
+        const button = $("#player-fullscreen");
+        if (button && !$("#playback-panel")?.classList.contains("manual-fullscreen")) {
+          button.textContent = document.fullscreenElement ? "退出全屏" : "全屏";
+        }
       });
     } catch (error) {
       body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") + '</div>';
     }
   }
 
-  async function startPlayback(episodeId, episodeNumber, seriesTitle, quality, resumeAt) {
+  function findPlayableEpisode(from, direction) {
+    const episodes = state.playback.episodes || [];
+    for (let index = from + direction; index >= 0 && index < episodes.length; index += direction) {
+      if (episodes[index] && episodes[index].playable !== false && episodes[index].id) return index;
+    }
+    return -1;
+  }
+
+  function changeEpisode(direction) {
+    const index = findPlayableEpisode(state.playback.index, direction);
+    if (index < 0) {
+      showToast(direction > 0 ? "已经是最后一集" : "已经是第一集");
+      return;
+    }
+    playEpisodeAt(index);
+  }
+
+  function playEpisodeAt(index) {
+    const episode = state.playback.episodes[index];
+    if (!episode || episode.playable === false) return;
+    state.playback.index = index;
+    startPlayback(index, state.playback.quality, 0);
+  }
+
+  async function startPlayback(index, quality, resumeAt) {
+    const playback = state.playback;
+    const episode = playback.episodes[index];
+    if (!episode || !episode.id) return;
+    playback.index = index;
+    const requestID = ++playback.requestId;
+    const episodeNumber = episode.number || index + 1;
     const panel = $("#playback-panel");
     const video = $("#web-player");
     const status = $("#playback-status");
     const caption = $("#player-caption");
     const qualitySelect = $("#player-quality");
+    const speedSelect = $("#player-speed");
     panel.hidden = false;
-    caption.textContent = (seriesTitle || "短剧") + " · 第 " + (episodeNumber || "?") + " 集";
+    caption.textContent = playback.seriesTitle + " · 第 " + episodeNumber + " 集";
     status.textContent = "正在解析播放地址…";
     video.pause();
     video.removeAttribute("src");
     video.load();
 
     try {
-      const chosen = quality || "best";
-      const info = await request("/api/v1/play/" + encodeURIComponent(episodeId) + "?quality=" + encodeURIComponent(chosen));
+      const chosen = quality || playback.quality || "best";
+      const info = await request("/api/v1/play/" + encodeURIComponent(episode.id) + "?quality=" + encodeURIComponent(chosen));
+      if (requestID !== playback.requestId) return;
+      playback.quality = info.quality || chosen;
       qualitySelect.innerHTML = (info.available_qualities || []).map((item) =>
         '<option value="' + escapeHTML(item.label) + '">' + escapeHTML(item.label) + (item.codec ? " · " + escapeHTML(item.codec) : "") + '</option>'
       ).join("");
-      if (!qualitySelect.options.length) {
-        qualitySelect.innerHTML = '<option value="best">自动</option>';
-      }
-      qualitySelect.value = info.quality || chosen;
-      qualitySelect.onchange = () => {
-        const position = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        startPlayback(episodeId, episodeNumber, seriesTitle, qualitySelect.value, position);
-      };
+      if (!qualitySelect.options.length) qualitySelect.innerHTML = '<option value="best">自动</option>';
+      qualitySelect.value = playback.quality;
+      speedSelect.value = String(playback.speed || 1);
 
       status.textContent = "已取得 " + (info.quality || "自动") + " 播放流" +
-        (info.protected ? " · N1 正在按需解密" : " · 明文 MP4") +
-        "。正在连接视频…";
+        (info.protected ? " · N1 正在按需解密" : " · 明文 MP4") + "。正在连接视频…";
       const target = Math.max(0, Number(resumeAt) || 0);
       if (target > 0) {
         video.addEventListener("loadedmetadata", () => {
@@ -301,16 +463,89 @@
       };
       video.src = info.src;
       video.load();
+      video.playbackRate = playback.speed || 1;
       try {
         await video.play();
-        status.textContent = "正在播放 · " + (info.quality || "自动") +
-          (document.pictureInPictureEnabled ? " · 支持画中画" : "");
+        if (requestID === playback.requestId) {
+          status.textContent = "正在播放 · " + (info.quality || "自动") + " · " + video.playbackRate + "×";
+        }
       } catch (_) {
-        status.textContent = "播放地址已就绪，点击视频播放键开始。";
+        if (requestID === playback.requestId) status.textContent = "播放地址已就绪，点击视频播放键开始。";
       }
+      updateEpisodeButtons();
     } catch (error) {
+      if (requestID !== playback.requestId) return;
       status.textContent = error.message || "播放初始化失败";
       showToast(error.message || "播放初始化失败");
+    }
+  }
+
+  function updateEpisodeButtons() {
+    const playback = state.playback;
+    const previous = $("#player-prev");
+    const next = $("#player-next");
+    if (previous) previous.disabled = findPlayableEpisode(playback.index, -1) < 0;
+    if (next) next.disabled = findPlayableEpisode(playback.index, 1) < 0;
+    document.querySelectorAll(".episode-chip").forEach((button) => {
+      button.classList.toggle("playing", button.dataset.episodeId === String(playback.episodes[playback.index]?.id || ""));
+    });
+  }
+
+  async function openCastPicker() {
+    const playback = state.playback;
+    const episode = playback.episodes[playback.index];
+    if (!episode || !playback.seriesId) {
+      showToast("请先播放一集，再投屏到电视");
+      return;
+    }
+    const dialog = $("#cast-dialog");
+    const content = $("#cast-dialog-content");
+    content.innerHTML = '<div class="empty-state">正在搜索局域网内的 hongguoTV…</div>';
+    if (!dialog.open) dialog.showModal();
+    try {
+      const result = await request("/api/v1/tv/devices");
+      const devices = result.devices || [];
+      if (!devices.length) {
+        content.innerHTML = '<div class="cast-empty">没有发现电视。请确认电视已打开 hongguoTV，并且 N1、手机和电视在同一局域网，路由器允许 mDNS 组播。</div>';
+        return;
+      }
+      content.innerHTML = devices.map((device) =>
+        '<button type="button" class="cast-device" data-device-id="' + escapeHTML(device.device_id) + '">' +
+        '<span class="cast-tv-icon">▣</span><span><strong>' + escapeHTML(device.name || "hongguoTV") + '</strong>' +
+        '<small>' + escapeHTML([device.manufacturer,device.model,device.code ? "编号 " + device.code : ""].filter(Boolean).join(" · ")) + '</small></span><span class="cast-chevron">›</span></button>'
+      ).join("");
+      content.querySelectorAll(".cast-device").forEach((button) => {
+        button.addEventListener("click", async () => {
+          content.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+          button.classList.add("sending");
+          const position = Math.max(0, Number($("#web-player").currentTime) || 0);
+          try {
+            const reply = await request("/api/v1/tv/handoff", {
+              method:"POST",
+              headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({
+                device_id:button.dataset.deviceId,
+                series_id:playback.seriesId,
+                episode:Number(episode.number) || playback.index + 1,
+                position_ms:Math.round(position * 1000)
+              })
+            });
+            if (reply.accepted) {
+              $("#web-player").pause();
+              showToast("已交给 " + (reply.device_name || "电视") + " 播放");
+              dialog.close();
+            } else {
+              button.disabled = false;
+              showToast(reply.message || "电视没有接受播放任务");
+            }
+          } catch (error) {
+            button.disabled = false;
+            showToast(error.message || "投屏失败");
+          }
+        });
+      });
+    } catch (error) {
+      content.innerHTML = '<div class="cast-empty">' + escapeHTML(error.message || "电视搜索失败") + '</div>';
     }
   }
 
@@ -339,7 +574,7 @@
     if (!$("#search-input").value.trim()) return;
     loadView("search", false);
   });
-  $("#refresh-button").addEventListener("click", () => loadView(state.view, false));
+  $("#refresh-button").addEventListener("click", () => loadView(state.view, false, true));
   $("#load-more").addEventListener("click", () => loadView(state.view, true));
   $("#series-grid").addEventListener("click", (event) => {
     const card = event.target.closest(".series-card");
@@ -358,6 +593,7 @@
   $("#detail-dialog").addEventListener("click", (event) => {
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
   });
+  $("#cast-dialog-close").addEventListener("click", () => $("#cast-dialog").close());
 
   loadView("discover", false);
 })();

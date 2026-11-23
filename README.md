@@ -14,11 +14,12 @@
 - 静态网页通过 `embed.FS` 嵌入程序，不需要 Node.js 运行时或数据库。
 - 默认把 SDK 匿名设备档案保存在进程内存，不写 TF 卡；服务重启后需要重新注册匿名设备。
 - 播放链路已接入 CENC AES-CTR 按需解密与 HTTP Range 转发，不做整片下载、不做 N1 视频转码。
-- 通过 N1 后端发现局域网内 hongguoTV，并复用现有一次性交接协议。
+- 封面图片通过 N1 同源代理，并使用 RAM 缓存和浏览器 HTTP 缓存，避免手机直接访问第三方图片 CDN。
+- 通过 N1 后端 mDNS 发现局域网内 hongguoTV，并复用现有 JSON-line protocol v1 一次性交接协议。
 
 ## 开发状态
 
-当前已接通片库浏览、剧集详情、分集选集与单文件 MP4 播放链路。HLS/DASH、观看历史同步、电视发现/接力仍在后续阶段；未完成的能力不会在 UI 中伪装成可用功能。
+当前已接通片库浏览、剧集详情、分集选集与单文件 MP4 播放链路；正在完善 N1 封面代理/RAM 缓存、目录页缓存和 hongguoTV 局域网接力。HLS/DASH、观看历史同步仍在后续阶段。
 
 ## 本地运行
 
@@ -55,6 +56,8 @@ chmod +x beixiaoguo-linux-arm64
 | `BEIXIAOGUO_VERSION` | 构建注入 | 版本信息 |
 
 播放 API：`GET /api/v1/play/{episodeID}?quality=720p` 返回同源媒体地址；浏览器随后使用 `GET /api/v1/media/{token}` 和标准 `Range` 请求播放。令牌、上游 URL 与 CENC 密钥仅保存在服务端内存。
+
+封面代理：目录 API 的 `cover_url` / `avatar_url` 等字段会被改写为 `/api/v1/images/{token}`。N1 最多缓存约 96 MiB 图片到 RAM，缓存 12 小时；浏览器获得 12 小时 HTTP 缓存。目录 API 响应也在 N1 内按操作类型做有限 TTL 缓存。
 
 ## 文档
 

@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - VERSION
-      - .github/workflows/release.yml
   workflow_dispatch:
 
 permissions:
@@ -38,6 +37,11 @@ jobs:
         run: go test ./...
       - name: Check browser JavaScript syntax
         run: node --check internal/webui/assets/app.js
+      - name: Check shell scripts
+        run: |
+          sh -n scripts/install-n1.sh
+          sh -n scripts/beixiaoguo.init
+          sh -n scripts/beixiaoguo-watchdog.sh
       - name: Build release assets
         env:
           VERSION: ${{ steps.meta.outputs.version }}
@@ -59,21 +63,19 @@ jobs:
           fail_on_unmatched_files: true
           body: |
             ## 本次更新
-            - N1 同源封面图片代理与 RAM 缓存。
-            - 页面切换时恢复列表、分页游标和滚动位置，目录数据增加有限 RAM 缓存。
-            - 播放器支持最高 3 倍速、上下滑动切集、上一集/下一集和自动连播。
-            - 增加 N1 到 hongguoTV 的局域网发现与播放进度交接。
-            - mDNS 搜索按 PTR / SRV / TXT / A/AAAA 分阶段查询；图片代理安全跟随有限 CDN 重定向。
-            - 修复 N1 更新器的 SHA-256 架构选择，只校验设备实际下载的二进制。
-            - 发现、搜索、排行榜和新剧首次打开后主动逐页预载，目标至少 100 部；每页返回即追加显示，达到目标后按滚动位置续载；封面按可视区域懒加载。保留真实频道 / 类型 / 榜单 / 日期筛选 TAG 与分页状态标签。
-            - 多季短剧详情页通过 SDK Seasons 接口列出全部季；当前季高亮，已上线季可点击切换，未上线季置灰。
-            - 修复顶部搜索按钮在窄屏被 Flex 压缩后“搜索”竖排；按钮固定宽度、强制横排，输入框负责弹性收缩。
+            - N1 / iStoreOS 新增 OpenWrt 原生 procd 服务：二进制安装在持久化的 /usr/bin/beixiaoguo，服务开机自启。
+            - 服务进程异常退出后每隔 5 秒自动重试；加入本机健康检查守护，连续 3 次失败时请求 procd 重启应用实例。
+            - 运行日志进入 OpenWrt 有界 RAM 日志缓冲，可用 `logread | grep -i beixiaoguo` 查看；缓存、会话和监控状态仍在 RAM，避免运行期间持续写入 TF 卡。
+            - 一键更新器会迁移旧版 /tmp 中的程序、校验 SHA-256、预检服务脚本，并在健康检查失败时尝试回滚。
+            - N1 同源封面图片代理与 RAM 缓存；页面切换恢复列表、分页游标和滚动位置。
+            - 播放器支持最高 3 倍速、上下滑动切集、上一集/下一集和自动连播，及 N1 到 hongguoTV 的局域网发现与播放进度交接。
+            - 发现、搜索、排行榜和新剧首次打开后逐页预载，目标至少 100 部；多季短剧详情页列出全部季；修复顶部搜索按钮窄屏下“搜索”竖排。
 
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`
             - Linux x86_64（AMD64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-amd64`
             - SHA-256 校验文件：`beixiaoguo-v${{ steps.meta.outputs.version }}-SHA256SUMS.txt`
 
-            自动化测试和交叉编译通过；真实 N1、手机图片 CDN 与电视端接力仍需实机验收。
+            自动化测试和交叉编译通过；服务安装及健康检查脚本通过 shell 语法检查。真实 N1 重启持久化和手机 Tailscale 访问仍需实机验收。
           files: |
             dist/*

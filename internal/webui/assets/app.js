@@ -28,6 +28,7 @@
     activeViewKey: "",
     loadSequence: 0,
     autoLoadScheduled: false,
+    detailRequestId: 0,
     playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0}
   };
 
@@ -482,8 +483,83 @@
     video.load();
   }
 
+  function parseSeasonNumber(raw) {
+    const value = String(raw || "");
+    if (/^\\d+$/.test(value)) return Number(value);
+    const digits = {"零":0,"〇":0,"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9};
+    let total = 0, current = 0;
+    for (const ch of value) {
+      if (ch === "十") { total += Math.max(current, 1) * 10; current = 0; }
+      else if (ch === "百") { total += Math.max(current, 1) * 100; current = 0; }
+      else current = digits[ch] || 0;
+    }
+    return total + current;
+  }
+
+  function normalizeSeasons(input) {
+    const seasons = (Array.isArray(input) ? input : []).filter((season) => season && (season.series_id || season.seriesId)).map((season) => {
+      let index = Number(season.index) || 0;
+      if (index <= 0) {
+        const re = /第\\s*([0-9一二两三四五六七八九十百零〇]+)\\s*[季部]/g;
+        let match;
+        let last = "";
+        while ((match = re.exec(String(season.title || ""))) !== null) last = match[1];
+        if (last) index = parseSeasonNumber(last);
+      }
+      return Object.assign({}, season, {series_id:String(season.series_id || season.seriesId), index});
+    });
+    const used = new Set();
+    let missing = -1;
+    let distinct = true;
+    seasons.forEach((season, i) => {
+      if (season.index <= 0 && missing === -1) missing = i;
+      else if (season.index <= 0) distinct = false;
+      else if (used.has(season.index)) distinct = false;
+      used.add(season.index);
+    });
+    if (missing >= 0 && distinct && !used.has(1)) seasons[missing].index = 1;
+    const seen = new Set();
+    const sequential = seasons.every((season) => season.index > 0 && !seen.has(season.index) && (seen.add(season.index), true));
+    if (sequential) seasons.sort((a, b) => a.index - b.index);
+    else seasons.forEach((season, i) => { season.index = i + 1; });
+    return seasons;
+  }
+
+  async function loadSeasonChoices(id, detailRequestID) {
+    try {
+      const album = await request("/api/v1/series/" + encodeURIComponent(id) + "/seasons");
+      if (detailRequestID !== state.detailRequestId || state.playback.seriesId !== id) return;
+      const seasons = normalizeSeasons(album.seasons || []);
+      const section = $("#season-section");
+      const list = $("#season-list");
+      if (!section || !list) return;
+      if (seasons.length <= 1) { section.hidden = true; return; }
+      $("#season-count").textContent = seasons.length + " 季";
+      list.innerHTML = seasons.map((season) => {
+        const active = season.series_id === id;
+        const disabled = Number(season.episode_count) <= 0;
+        return '<button type="button" class="season-chip' + (active ? " active" : "") + \'" data-series-id="' + escapeHTML(season.series_id) + \'" aria-pressed="' + (active ? "true" : "false") + \'"' + (disabled ? ' disabled title="该季暂未上线或没有可用剧集"' : "") + '>第 ' + season.index + " 季" + (Number(season.episode_count) > 0 ? '<small>' + Number(season.episode_count) + " 集</small>" : "") + "</button>";
+      }).join("");
+      list.addEventListener("click", (event) => {
+        const button = event.target.closest(".season-chip");
+        if (!button || button.disabled || button.dataset.seriesId === id) return;
+        openDetail(button.dataset.seriesId);
+      });
+    } catch (error) {
+      if (detailRequestID !== state.detailRequestId || state.playback.seriesId !== id) return;
+      const section = $("#season-section");
+      const list = $("#season-list");
+      if (!section || !list) return;
+      $("#season-count").textContent = "载入失败";
+      list.innerHTML = '<span class="season-load-error">季列表暂时载入失败</span><button id="season-retry" class="season-retry" type="button">重试</button>';
+      $("#season-retry").addEventListener("click", () => loadSeasonChoices(id, detailRequestID));
+      console.warn("[seasons] load failed", error);
+    }
+  }
+
   async function openDetail(id) {
     if (!id) return;
+    const detailRequestID = ++state.detailRequestId;
     stopPlayback();
     const dialog = $("#detail-dialog");
     const body = $("#detail-content");
@@ -494,7 +570,9 @@
         request("/api/v1/series/" + encodeURIComponent(id)),
         request("/api/v1/series/" + encodeURIComponent(id) + "/episodes")
       ]);
+      if (detailRequestID !== state.detailRequestId) return;
       const episodes = episodePage.items || [];
+      const hasMultiSeason = !!(series.is_multi_season || series.related_album_id);
       const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);
       const fav = state.favorites.some((entry) => entry.id === id);
@@ -507,6 +585,7 @@
         '<div class="detail-meta">' + escapeHTML(episodes.length + " 集") + '</div>' +
         '<p>' + escapeHTML(series.description || "暂无简介") + '</p>' +
         '<button id="favorite-toggle" class="load-more" type="button">' + (fav ? "♥ 已收藏" : "♡ 收藏这部剧") + '</button></div></div>' +
+        '<section id="season-section" class="season-section"' + (hasMultiSeason ? "" : " hidden") + '><div class="season-header"><h3 class="season-heading">选择季数</h3><span id="season-count" class="detail-meta">' + (hasMultiSeason ? "正在载入…" : "") + '</span></div><div id="season-list" class="season-list">' + (hasMultiSeason ? '<span class="season-loading">正在载入全部季…</span>' : "") + '</div></section>' +
         '<section id="playback-panel" class="playback-panel" hidden>' +
         '<div class="player-toolbar"><span id="player-caption">正在准备播放…</span>' +
         '<label class="quality-control">画质 <select id="player-quality" aria-label="播放画质"><option value="best">自动</option></select></label>' +
@@ -525,6 +604,7 @@
         episodes.map((ep) => '<button class="episode-chip" type="button" data-episode-id="' + escapeHTML(ep.id) + '" data-episode-number="' + escapeHTML(ep.number || "") + '"' + (ep.playable === false ? ' disabled title="当前分集不可播放"' : '') + '>' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
         '</div><div class="player-note">支持 0.5–3 倍速、上下滑切集和自动连播。视频仍由 N1 按需读取与解密；投屏通过局域网交给 hongguoTV。</div>';
 
+      if (hasMultiSeason) loadSeasonChoices(id, detailRequestID);
       $("#favorite-toggle").addEventListener("click", () => toggleFavorite(normalize(series)));
       body.querySelector(".episode-grid").addEventListener("click", (event) => {
         const button = event.target.closest(".episode-chip");
@@ -600,6 +680,7 @@
         }
       });
     } catch (error) {
+      if (detailRequestID !== state.detailRequestId) return;
       body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") + '</div>';
     }
   }

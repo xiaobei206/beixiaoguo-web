@@ -75,6 +75,7 @@ func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 	mux.HandleFunc("GET /api/v1/rank", s.shortRank)
 	mux.HandleFunc("GET /api/v1/series/{id}", s.series)
 	mux.HandleFunc("GET /api/v1/series/{id}/episodes", s.episodes)
+	mux.HandleFunc("GET /api/v1/series/{id}/seasons", s.seasons)
 	mux.HandleFunc("GET /api/v1/play/{episodeID}", s.play)
 	mux.Handle("GET /api/v1/media/{token}", s.media)
 	mux.Handle("GET /api/v1/images/{token}", s.images)
@@ -224,6 +225,17 @@ func (s *Server) episodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) seasons(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "缺少短剧 ID", "")
+		return
+	}
+	s.run(w, r, "seasons", func(ctx context.Context) (any, error) {
+		return s.client.Seasons(ctx, id)
+	})
+}
+
 func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 	episodeID := strings.TrimSpace(r.PathValue("episodeID"))
 	quality := strings.TrimSpace(r.URL.Query().Get("quality"))
@@ -326,7 +338,7 @@ func cacheTTL(operation string) time.Duration {
 		return 90 * time.Second
 	case "hot-search":
 		return 60 * time.Second
-	case "series":
+	case "series", "seasons":
 		return 20 * time.Minute
 	case "episodes":
 		return 10 * time.Minute

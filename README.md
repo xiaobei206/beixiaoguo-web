@@ -77,7 +77,7 @@
 wget -qO /tmp/beixiaoguo-install.sh https://raw.githubusercontent.com/xiaobei206/beixiaoguo-web/main/scripts/install-n1.sh && sh /tmp/beixiaoguo-install.sh
 ```
 
-默认监听 `0.0.0.0:8780`，家庭网络访问 `http://N1_IP:8780`；Tailscale 设备可尝试 N1 自身的 Tailscale IP。管理命令：`/etc/init.d/beixiaoguo status|start|stop|restart`；查询开机自启：`/etc/init.d/beixiaoguo enabled`；查看日志：`logread | grep -i beixiaoguo`。脚本会在当前 SSH shell 结束后返回提示符，不会打开新窗口。
+默认监听 `0.0.0.0:8780`，家庭网络访问 `http://N1_IP:8780`；Tailscale 设备可尝试 N1 自身的 Tailscale IP。管理命令分别为 `/etc/init.d/beixiaoguo status`、`start`、`stop`、`restart`（将命令替换为完整路径执行）；查询开机自启：`/etc/init.d/beixiaoguo enabled`；查看日志：`logread | grep -i beixiaoguo`。脚本会在当前 SSH shell 结束后返回提示符，不会打开新窗口。
 
 ## 本地开发
 

@@ -407,7 +407,7 @@
       state.pageCount = append ? state.pageCount + 1 : 1;
       state.cursor = data.cursor || data.next_cursor || "";
       state.hasMore = !!data.has_more && !!state.cursor;
-      if (append && mapped.length > 0 && addedCount === 0) state.hasMore = false;
+      if (append && addedCount === 0) state.hasMore = false;
 
       if (view === "rank") {
         if (Array.isArray(data.contents)) {
@@ -462,7 +462,7 @@
 
   function maybeAutoLoadMore() {
     if (!state.hasMore || state.busy || !["discover", "search", "rank", "new"].includes(state.view)) return;
-    if (state.pageCount < 2 || isNearPageEnd()) loadView(state.view, true);
+    if (isNearPageEnd()) loadView(state.view, true);
   }
   function stopPlayback() {
     const video = $("#web-player");

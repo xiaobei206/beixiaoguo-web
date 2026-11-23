@@ -9,6 +9,7 @@
 
 ## 当前状态
 
+- **0.1.9**：N1 / iStoreOS 改用原生 procd 服务，程序安装到持久化 `/usr/bin/beixiaoguo`，开机自动启动；异常退出无限重试，并增加每 15 秒一次、连续失败 3 次触发重启的健康监控。日志留在 OpenWrt RAM 日志缓冲。
 - **0.1.8**：修复顶部搜索按钮在窄屏被压缩后文字竖排；按钮固定宽度、不换行，输入框弹性缩放。
 
 - **0.1.7**：多季短剧详情页通过新增 seasons API 列出全部季，当前季高亮、已上线季可点选切换、无可用剧集的季置灰；季列表异步加载且可重试。
@@ -30,7 +31,7 @@
 
 - 当前版本从根目录 VERSION 读取。
 - 修改 VERSION 后，GitHub Actions Release 工作流会测试、交叉编译、创建 vX.Y.Z 标签并发布正式 Release。
-- 正式 Release 附 ARM64、AMD64 二进制及 SHA256SUMS；N1 更新脚本通过 SHA-256 校验后部署到 /tmp。
+- 正式 Release 附 ARM64、AMD64 二进制及 SHA256SUMS；N1 更新脚本通过 SHA-256 校验后部署到持久化 /usr/bin，并注册 /etc/init.d procd 服务。运行日志留在 RAM 日志缓冲。
 - CI artifact 只用于临时构建验证，不再作为正式安装入口。
 
 ## 最近自动化验证

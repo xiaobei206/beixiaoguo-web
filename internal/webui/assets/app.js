@@ -2,17 +2,31 @@
   "use strict";
 
   const $ = (selector) => document.querySelector(selector);
+  function todayDateKey() {
+    const now = new Date();
+    return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
+  }
+
   const state = {
     view: "discover",
     cursor: "",
     hasMore: false,
     busy: false,
     items: [],
+    pageCount: 0,
+    discoverChannel: "推荐",
+    searchType: "all",
+    rankContent: "all",
+    rankBoard: "",
+    rankContents: [],
+    newDate: todayDateKey(),
+    newDates: [],
     favorites: loadFavorites(),
     toastTimer: 0,
     viewCache: Object.create(null),
     activeViewKey: "",
     loadSequence: 0,
+    autoLoadScheduled: false,
     playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0}
   };
 
@@ -75,8 +89,8 @@
 
   function normalize(item) {
     return {
-      id: item.id || item.series_id || item.seriesId || "",
-      title: item.title || "未命名短剧",
+      id: item.id || item.series_id || item.seriesId || item.actor_id || item.actorId || "",
+      title: item.title || item.name || "未命名短剧",
       cover_url: item.cover_url || item.coverUrl || "",
       description: item.description || "",
       episode_count: item.episode_count || item.episodeCount || 0,
@@ -142,10 +156,100 @@
     $("#refresh-button").disabled = busy;
     $("#load-more").disabled = busy;
     $("#load-more").textContent = busy ? "正在加载…" : "加载更多";
+    renderPagination();
+  }
+
+  const discoverChannels = [
+    ["推荐", "推荐"], ["真人剧", "真人剧"], ["漫剧", "漫剧"],
+    ["找剧", "找剧"], ["电影", "电影"], ["小说", "小说"]
+  ];
+  const searchTypes = [
+    ["all", "全部"], ["short", "真人剧"], ["comic", "漫剧"],
+    ["ai", "AI漫剧"], ["film", "影视剧"], ["unwatched", "未看过"]
+  ];
+
+  function tagRow(label, kind, options) {
+    if (!options || !options.length) return "";
+    return '<div class="filter-row"><span class="filter-label">' + escapeHTML(label) + '</span><div class="filter-list">' +
+      options.map((option) => '<button type="button" class="filter-tag' + (option.active ? " active" : "") +
+        '" data-filter-kind="' + escapeHTML(kind) + '" data-filter-value="' + escapeHTML(option.value) +
+        '" aria-pressed="' + (option.active ? "true" : "false") + '">' + escapeHTML(option.label) + '</button>').join("") +
+      '</div></div>';
+  }
+
+  function formatDateTag(value) {
+    const raw = String(value || "");
+    const match = raw.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+    if (!match) return raw;
+    const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+    const dayValue = Date.UTC(year, month - 1, day);
+    const now = new Date();
+    const todayValue = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const delta = Math.round((dayValue - todayValue) / 86400000);
+    if (delta === 0) return "今天";
+    if (delta === -1) return "昨天";
+    if (delta === 1) return "明天";
+    return month + "/" + day;
+  }
+
+  function renderFilterTags() {
+    const container = $("#filter-tags");
+    if (!container) return;
+    const rows = [];
+    if (state.view === "discover") {
+      rows.push(tagRow("频道", "channel", discoverChannels.map(([value, label]) => ({
+        value, label, active: state.discoverChannel === value
+      }))));
+    } else if (state.view === "search") {
+      rows.push(tagRow("类型", "search-type", searchTypes.map(([value, label]) => ({
+        value, label, active: state.searchType === value
+      }))));
+    } else if (state.view === "rank" && state.rankContents.length) {
+      rows.push(tagRow("类型", "rank-content", state.rankContents.map((content) => ({
+        value: content.id, label: content.name, active: content.id === state.rankContent
+      }))));
+      const selectedContent = state.rankContents.find((item) => item.id === state.rankContent) ||
+        state.rankContents.find((item) => item.selected) || state.rankContents[0];
+      if (selectedContent && Array.isArray(selectedContent.boards) && selectedContent.boards.length) {
+        rows.push(tagRow("榜单", "rank-board", selectedContent.boards.map((board) => ({
+          value: board.id, label: board.name, active: board.id === state.rankBoard
+        }))));
+      }
+    } else if (state.view === "new" && state.newDates.length) {
+      rows.push(tagRow("日期", "new-date", state.newDates.map((value) => ({
+        value, label: formatDateTag(value), active: String(value) === String(state.newDate)
+      }))));
+    }
+    container.innerHTML = rows.join("");
+    container.hidden = rows.length === 0;
+  }
+
+  function renderPagination() {
+    const info = $("#pagination-tag");
+    const more = $("#load-more");
+    if (!info || !more) return;
+    const paged = ["discover", "search", "rank", "new"].includes(state.view);
+    if (!paged || !state.items.length) {
+      info.hidden = true;
+      more.hidden = true;
+      return;
+    }
+    let label = "已载入 " + state.items.length + " 部";
+    if (state.pageCount > 0) label += " · 第 " + state.pageCount + " 页";
+    if (state.busy) label += " · 加载中";
+    else if (state.hasMore) label += " · 向下滚动自动加载";
+    else label += " · 已加载完毕";
+    info.textContent = label;
+    info.hidden = false;
+    more.hidden = !state.hasMore;
   }
 
   function viewCacheKey(view) {
-    return view === "search" ? "search:" + $("#search-input").value.trim() : view;
+    if (view === "search") return "search:" + $("#search-input").value.trim() + ":" + state.searchType;
+    if (view === "discover") return "discover:" + state.discoverChannel;
+    if (view === "rank") return "rank:" + (state.rankContent || "all") + ":" + (state.rankBoard || "default");
+    if (view === "new") return "new:" + (state.newDate || todayDateKey());
+    return view;
   }
 
   function saveActiveView() {
@@ -154,6 +258,14 @@
       items: state.items.slice(),
       cursor: state.cursor,
       hasMore: state.hasMore,
+      pageCount: state.pageCount,
+      discoverChannel: state.discoverChannel,
+      searchType: state.searchType,
+      rankContent: state.rankContent,
+      rankBoard: state.rankBoard,
+      rankContents: state.rankContents.slice(),
+      newDate: state.newDate,
+      newDates: state.newDates.slice(),
       scrollY: window.scrollY,
       savedAt: Date.now()
     };
@@ -170,11 +282,20 @@
     state.items = cached.items.slice();
     state.cursor = cached.cursor;
     state.hasMore = cached.hasMore;
+    state.pageCount = cached.pageCount || (cached.items.length ? 1 : 0);
+    state.discoverChannel = cached.discoverChannel || state.discoverChannel;
+    state.searchType = cached.searchType || "all";
+    state.rankContent = cached.rankContent || "all";
+    state.rankBoard = cached.rankBoard || "";
+    state.rankContents = Array.isArray(cached.rankContents) ? cached.rankContents.slice() : [];
+    state.newDate = cached.newDate || state.newDate || todayDateKey();
+    state.newDates = Array.isArray(cached.newDates) ? cached.newDates.slice() : [];
     setHeading(view);
+    renderFilterTags();
     renderCards(state.items);
     if (view === "discover") renderHero(state.items);
     else $("#hero").hidden = true;
-    $("#load-more").hidden = !state.hasMore;
+    renderPagination();
     setStatus("已从页面缓存恢复 · " + state.items.length + " 部");
     window.requestAnimationFrame(() => window.scrollTo({top:cached.scrollY || 0,behavior:"auto"}));
   }

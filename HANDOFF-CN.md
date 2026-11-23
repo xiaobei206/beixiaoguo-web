@@ -36,5 +36,5 @@
 
 ## 最近自动化验证
 
-- 最近一次确认通过的 CI：commit 6bdd2a6，run 45222436061。
-- 0.1.3 的新 Release 工作流会在 VERSION 更新提交进入 main 后自动运行；只有 GitHub Release 页面出现 v0.1.3 和对应附件，才算发布完成。
+- v0.1.9 推送到 main 后，Release 工作流将运行 Go 测试、浏览器 JavaScript 语法检查、三个 Shell 脚本语法检查，以及 AMD64 / ARM64 交叉编译。
+- 自动化通过不等于已在 N1 实机重启验收；以 Release 成功发布及后续 N1 重启测试分别确认。

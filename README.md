@@ -2,9 +2,17 @@
 
 面向家庭局域网的短剧 Web 客户端。后端使用 Go，前端使用原生 TypeScript/JavaScript、HTML 与 CSS；构建后由一个 Go 可执行文件提供网页和 API。
 
-> 当前版本：**0.1.8**
+> 当前版本：**0.1.9**
 >
 > 本项目是非官方个人项目，与红果短剧及其运营方无关联。请遵守内容平台的服务条款与适用法律，仅访问有权访问的内容。
+
+## 0.1.9
+
+- N1 / iStoreOS 改用 OpenWrt 原生 `procd` 服务：程序持久化安装在 `/usr/bin/beixiaoguo`，启用开机自启。
+- 主服务异常退出后由 procd 无限重试拉起；独立健康检查每 15 秒检查本机 health，连续 3 次失败时请求 procd 重启应用实例。
+- 运行日志交给 OpenWrt 的 RAM 日志缓冲，使用 `logread | grep -i beixiaoguo` 查询；运行状态、缓存和媒体会话仍在 RAM。
+- 更新脚本先校验二进制 SHA-256 与服务脚本语法，再替换程序、启用服务并做健康检查；失败时尝试恢复旧程序。
+- 一次性写入持久化二进制和服务定义是开机自启的必要条件；日常运行不持续写入 TF 卡。
 
 ## 0.1.8
 
@@ -63,13 +71,13 @@
 
 ## N1 / iStoreOS 安装与更新
 
-推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版，校验 SHA-256，在 `/tmp` 中替换程序并启动服务；不把程序或日志写入 TF 卡：
+推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版并校验 SHA-256，将程序安装到持久化的 `/usr/bin/beixiaoguo`，再注册 `/etc/init.d/beixiaoguo` 开机服务和健康检查守护。只有安装/升级时才写入持久化存储；运行日志由 OpenWrt RAM 日志系统保存，不持续写 TF 卡：
 
 ```sh
 wget -qO /tmp/beixiaoguo-install.sh https://raw.githubusercontent.com/xiaobei206/beixiaoguo-web/main/scripts/install-n1.sh && sh /tmp/beixiaoguo-install.sh
 ```
 
-默认监听 `0.0.0.0:8780`，家庭网络中访问 `http://N1_IP:8780`。日志位于 `/tmp/beixiaoguo.log`。脚本会在当前 shell 的子进程中运行；正常交互式 SSH 会话应在脚本结束后返回提示符，它不会替你打开一个新的 SSH 窗口。
+默认监听 `0.0.0.0:8780`，家庭网络访问 `http://N1_IP:8780`；Tailscale 设备可尝试 N1 自身的 Tailscale IP。管理命令：`/etc/init.d/beixiaoguo status|start|stop|restart`；查询开机自启：`/etc/init.d/beixiaoguo enabled`；查看日志：`logread | grep -i beixiaoguo`。脚本会在当前 SSH shell 结束后返回提示符，不会打开新窗口。
 
 ## 本地开发
 

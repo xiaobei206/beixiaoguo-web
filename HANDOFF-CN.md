@@ -14,3 +14,7 @@
 - hongguoTV 发现与一次性交接：未实现。
 - HLS/DASH 与播放地址过期后的自动刷新：未实现。
 - N1 实机运行和手机浏览器验收：待完成。
+
+### 最近验证
+- GitHub Actions：Go tests / Node syntax / Linux AMD64 / Linux ARM64 全部通过。
+- 构建包：beixiaoguo-0.1.0-linux，见 [Actions run 45215498080](https://github.com/xiaobei206/beixiaoguo-web/actions/runs/45215498080)。

@@ -39,6 +39,8 @@
 | GET | \`/api/v1/rank\` | 短剧排行榜 |
 | GET | \`/api/v1/series/{id}\` | 短剧详情 |
 | GET | \`/api/v1/series/{id}/episodes\` | 分集列表 |
+| GET | `/api/v1/play/{episodeID}?quality=` | 解析播放模型并创建短时媒体会话 |
+| GET / HEAD | `/api/v1/media/{token}` | HTTP Range 媒体代理与 CENC 按需解密 |
 
 前端收藏保存在当前浏览器的 localStorage，不上传到 N1；不同设备的收藏暂不互通。
 

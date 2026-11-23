@@ -32,3 +32,9 @@
 - CI 编译和单元测试通过后，还需在 N1 与真实手机/桌面浏览器测试 CDN 是否稳定支持 Range、HEVC/H.264 浏览器解码和 CENC 实际文件结构。
 - 当前仅支持单文件 MP4，不支持 HLS/DASH 或音视频分离。
 - 真实网络播放仍需处理签名 URL 在长时间观看中到期后的自动刷新。
+
+
+### CI 验证记录
+- 最新提交 0642d97 的 GitHub Actions 运行 45215498080 全部通过：Go 测试、Node 脚本语法检查、Linux AMD64/ARM64 构建和产物上传。
+- ARM64/AMD64 构建产物：beixiaoguo-0.1.0-linux（GitHub Actions Artifact）。
+- 通过的是自动化构建与合成 MP4 测试，不代表已完成 N1 实机或真实 CDN 播放验收。

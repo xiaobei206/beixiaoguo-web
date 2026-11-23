@@ -24,6 +24,8 @@ jobs:
         run: go mod tidy
       - name: Test
         run: go test ./...
+      - name: Check browser JavaScript syntax
+        run: node --check internal/webui/assets/app.js
       - name: Prepare artifact directory
         run: mkdir -p dist
       - name: Build Linux AMD64

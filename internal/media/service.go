@@ -388,15 +388,21 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	buffer := make([]byte, streamBuffer)
 	position := requested.start
-	for {
-		n, readErr := upstream.Body.Read(buffer)
+	remaining := requested.end - requested.start + 1
+	for remaining > 0 {
+		readBuffer := buffer
+		if int64(len(readBuffer)) > remaining {
+			readBuffer = readBuffer[:int(remaining)]
+		}
+		n, readErr := upstream.Body.Read(readBuffer)
 		if n > 0 {
-			chunk := buffer[:n]
+			chunk := readBuffer[:n]
 			if session.layout != nil {
 				session.layout.Decrypt(chunk, position)
 			}
 			written, writeErr := w.Write(chunk)
 			position += int64(written)
+			remaining -= int64(written)
 			if writeErr != nil || written != n {
 				return
 			}
@@ -404,6 +410,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
 				s.logger.Printf("media read episode=%s range=%d-%d error_type=%T error=%v", session.episodeID, requested.start, requested.end, readErr, readErr)
+			} else if remaining > 0 {
+				s.logger.Printf("media short upstream body episode=%s expected_remaining=%d", session.episodeID, remaining)
 			}
 			return
 		}

@@ -199,8 +199,17 @@
     }
   }
 
+  function stopPlayback() {
+    const video = $("#web-player");
+    if (!video) return;
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  }
+
   async function openDetail(id) {
     if (!id) return;
+    stopPlayback();
     const dialog = $("#detail-dialog");
     const body = $("#detail-content");
     body.innerHTML = '<div class="empty-state">正在载入剧集详情…</div>';
@@ -345,6 +354,7 @@
     }
   });
   $("#dialog-close").addEventListener("click", () => $("#detail-dialog").close());
+  $("#detail-dialog").addEventListener("close", stopPlayback);
   $("#detail-dialog").addEventListener("click", (event) => {
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
   });

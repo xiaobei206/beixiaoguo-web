@@ -127,13 +127,40 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
+	filterType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	if q == "" || len([]rune(q)) > 100 {
 		writeError(w, http.StatusBadRequest, "INVALID_QUERY", "请输入 1 到 100 个字符的搜索词", "")
 		return
 	}
+	filters, err := searchFiltersForType(filterType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_FILTER", err.Error(), "")
+		return
+	}
 	s.run(w, r, "search", func(ctx context.Context) (any, error) {
-		return s.client.Search(ctx, q, sdk.SearchOptions{Cursor: cursor, PageSize: 20})
+		return s.client.Search(ctx, q, sdk.SearchOptions{
+			Cursor: cursor, PageSize: 20, Filters: filters,
+		})
 	})
+}
+
+func searchFiltersForType(kind string) ([]string, error) {
+	switch kind {
+	case "", "all":
+		return nil, nil
+	case "short":
+		return []string{sdk.SearchFilterShortPlay}, nil
+	case "comic":
+		return []string{sdk.SearchFilterComic}, nil
+	case "ai":
+		return []string{sdk.SearchFilterAIComic}, nil
+	case "film":
+		return []string{sdk.SearchFilterFilm}, nil
+	case "unwatched":
+		return []string{sdk.SearchFilterUnwatched}, nil
+	default:
+		return nil, fmt.Errorf("不支持的搜索筛选：%s", kind)
+	}
 }
 
 func (s *Server) suggest(w http.ResponseWriter, r *http.Request) {

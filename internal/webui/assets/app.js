@@ -111,25 +111,33 @@
     $("#welcome").hidden = view !== "discover";
   }
 
-  function renderCards(items) {
+  function renderCards(items, append) {
     const grid = $("#series-grid");
     if (!items.length) {
+      if (append && grid.querySelector(".series-card")) return;
       grid.innerHTML = '<div class="empty-state">这里暂时没有内容，试试刷新或换个关键词。</div>';
       return;
     }
-    grid.innerHTML = items.map((item) => {
+    const markup = items.map((item) => {
       const data = normalize(item);
       const cover = safeImage(data.cover_url);
       const fav = state.favorites.some((entry) => entry.id === data.id);
       const tag = data.tag ? '<span class="poster-tag">' + escapeHTML(data.tag) + '</span>' : "";
       return '<article class="series-card" tabindex="0" role="button" data-id="' + escapeHTML(data.id) + '" aria-label="查看 ' + escapeHTML(data.title) + '">' +
         '<div class="poster-wrap">' +
-        (cover ? '<img loading="lazy" src="' + escapeHTML(cover) + '" alt="' + escapeHTML(data.title) + '">' : '<div class="poster-placeholder">贝</div>') +
+        (cover ? '<img loading="lazy" decoding="async" src="' + escapeHTML(cover) + '" alt="' + escapeHTML(data.title) + '">' : '<div class="poster-placeholder">贝</div>') +
         tag + (fav ? '<span class="poster-tag favorite-tag">♥</span>' : "") +
         '</div><h3 class="card-title">' + escapeHTML(data.title) + '</h3>' +
         '<div class="card-meta">' + escapeHTML(data.episode_count ? data.episode_count + " 集" : data.heat || "短剧") + '</div>' +
         '</article>';
     }).join("");
+    if (append) {
+      const empty = grid.querySelector(".empty-state");
+      if (empty) empty.remove();
+      grid.insertAdjacentHTML("beforeend", markup);
+    } else {
+      grid.innerHTML = markup;
+    }
   }
 
   function renderHero(items) {
@@ -409,13 +417,13 @@
         if (data.board) state.rankBoard = data.board;
         state.activeViewKey = viewCacheKey(view);
       } else if (view === "new") {
-        if (Array.isArray(data.dates)) state.newDates = data.dates.slice();
+        if (Array.isArray(data.dates)) state.newDates = data.dates.map((value) => String(value).replace(/-/g, ""));
         if (data.date) state.newDate = String(data.date).replace(/-/g, "");
         state.activeViewKey = viewCacheKey(view);
       }
 
       renderFilterTags();
-      renderCards(state.items);
+      renderCards(append ? state.items.slice(previousCount) : state.items, append);
       if (!append && view === "discover") renderHero(state.items);
       renderPagination();
       setStatus(state.items.length

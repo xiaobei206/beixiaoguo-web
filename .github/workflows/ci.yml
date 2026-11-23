@@ -20,6 +20,9 @@ jobs:
         with:
           go-version: "1.22.x"
           cache: true
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '\r\n' < VERSION)" >> "$GITHUB_OUTPUT"
       - name: Resolve modules
         run: go mod tidy
       - name: Test
@@ -29,11 +32,13 @@ jobs:
       - name: Prepare artifact directory
         run: mkdir -p dist
       - name: Build Linux AMD64
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/beixiaoguo-linux-amd64 ./cmd/beixiaoguo
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }}" -o dist/beixiaoguo-linux-amd64 ./cmd/beixiaoguo
       - name: Build Linux ARM64
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/beixiaoguo-linux-arm64 ./cmd/beixiaoguo
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${{ steps.version.outputs.version }}" -o dist/beixiaoguo-linux-arm64 ./cmd/beixiaoguo
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: beixiaoguo-0.1.0-linux
+          name: beixiaoguo-v${{ steps.version.outputs.version }}-linux
           path: dist/*
+          if-no-files-found: error
+          retention-days: 14

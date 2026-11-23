@@ -36,9 +36,9 @@ button { color: inherit; }
 .search-box { height:43px; max-width:520px; flex:1; display:flex; align-items:center; gap:10px; padding:0 6px 0 15px; border:1px solid var(--line); border-radius:13px; background:rgba(255,255,255,.045); transition:border-color .2s,background .2s; }
 .search-box:focus-within { border-color:rgba(241,106,138,.55); background:rgba(255,255,255,.065); }
 .search-icon { color:var(--muted); font-size:25px; line-height:1; transform:rotate(-20deg); }
-.search-box input { min-width:0; width:100%; border:0; outline:0; color:var(--text); background:transparent; font-size:14px; }
+.search-box input { flex:1 1 auto; min-width:0; width:100%; border:0; outline:0; color:var(--text); background:transparent; font-size:14px; }
 .search-box input::placeholder { color:#817a85; }
-.search-box button { height:31px; padding:0 14px; border:0; border-radius:9px; background:#bd5579; color:white; cursor:pointer; font-size:13px; font-weight:650; }
+.search-box button { flex:0 0 auto; min-width:64px; height:31px; padding:0 12px; border:0; border-radius:9px; background:#bd5579; color:white; cursor:pointer; font-size:13px; font-weight:650; line-height:1; white-space:nowrap; writing-mode:horizontal-tb; text-orientation:mixed; }
 .lan-pill { display:flex; align-items:center; gap:8px; color:#c6bec7; white-space:nowrap; font-size:12px; }
 .lan-pill span,.eyebrow-dot { width:7px; height:7px; display:inline-block; background:#83d5ae; border-radius:50%; box-shadow:0 0 10px rgba(131,213,174,.5); }
 .main-nav { display:flex; gap:31px; height:57px; align-items:center; border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:none; }

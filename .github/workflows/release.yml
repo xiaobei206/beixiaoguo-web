@@ -65,6 +65,7 @@ jobs:
             - 增加 N1 到 hongguoTV 的局域网发现与播放进度交接。
             - mDNS 搜索按 PTR / SRV / TXT / A/AAAA 分阶段查询；图片代理安全跟随有限 CDN 重定向。
             - 修复 N1 更新器的 SHA-256 架构选择，只校验设备实际下载的二进制。
+            - 发现、搜索、排行榜和新剧默认预载两页并在接近底部时自动续载；新增真实频道 / 类型 / 榜单 / 日期筛选 TAG 与分页状态标签。
 
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`

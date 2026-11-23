@@ -75,7 +75,7 @@
 
 ## 部署
 
-N1 默认监听 \`0.0.0.0:8780\`，通过 \`BEIXIAOGUO_ADDR\` 修改。运行时不需要写入项目目录；若设备重启，进程内匿名档案会丢失并重新注册。
+N1 默认监听 \`0.0.0.0:8780\`，通过 \`BEIXIAOGUO_ADDR\` 修改。可执行文件固定安装在持久化路径 \`/usr/bin/beixiaoguo\`；\`/etc/init.d/beixiaoguo\` 使用 OpenWrt procd 开机启动，主进程以 \`respawn 3600 5 0\` 无限重试。另有健康检查实例每 15 秒访问本机 \`/api/v1/health\`，连续 3 次失败后向 procd 的 app 实例发送 TERM，以触发重启。日志写入 OpenWrt 的 RAM 日志缓冲，可通过 \`logread | grep -i beixiaoguo\` 查询。匿名档案、缓存、会话和日志不写入持久化存储；重启后内存数据会清空并重新建立。
 
 
 ## 列表分页与筛选标签

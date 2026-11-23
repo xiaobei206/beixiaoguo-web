@@ -311,14 +311,17 @@
       state.view = view;
       state.activeViewKey = key;
       setHeading(view);
+      renderFilterTags();
 
       if (view === "mine") {
         state.cursor = "";
         state.hasMore = false;
+        state.pageCount = 0;
         state.items = [];
         renderCards(state.favorites);
-        $("#load-more").hidden = true;
         $("#hero").hidden = true;
+        renderFilterTags();
+        renderPagination();
         setStatus(state.favorites.length ? "收藏保存在当前浏览器，不会上传到 N1。" : "还没有收藏的短剧。打开剧集详情即可收藏。");
         return;
       }
@@ -330,9 +333,11 @@
       }
       state.cursor = "";
       state.hasMore = false;
+      state.pageCount = 0;
       state.items = [];
       $("#hero").hidden = true;
       $("#series-grid").innerHTML = "";
+      renderPagination();
     }
 
     const loadID = ++state.loadSequence;
@@ -344,20 +349,33 @@
       let items = [];
       let endpoint = "";
       if (view === "discover") {
-        endpoint = "/api/v1/discover" + (append && state.cursor ? "?cursor=" + encodeURIComponent(state.cursor) : "");
+        const params = new URLSearchParams();
+        params.set("channel", state.discoverChannel || "推荐");
+        if (append && state.cursor) params.set("cursor", state.cursor);
+        endpoint = "/api/v1/discover?" + params.toString();
         data = await request(endpoint);
         items = data.items || [];
       } else if (view === "search") {
-        const q = $("#search-input").value.trim();
-        endpoint = "/api/v1/search?q=" + encodeURIComponent(q) + (append && state.cursor ? "&cursor=" + encodeURIComponent(state.cursor) : "");
+        const params = new URLSearchParams();
+        params.set("q", $("#search-input").value.trim());
+        if (append && state.cursor) params.set("cursor", state.cursor);
+        if (state.searchType && state.searchType !== "all") params.set("type", state.searchType);
+        endpoint = "/api/v1/search?" + params.toString();
         data = await request(endpoint);
         items = data.items || [];
       } else if (view === "new") {
-        endpoint = "/api/v1/new-releases";
+        const params = new URLSearchParams();
+        params.set("date", state.newDate || todayDateKey());
+        if (append && state.cursor) params.set("cursor", state.cursor);
+        endpoint = "/api/v1/new-releases?" + params.toString();
         data = await request(endpoint);
         items = data.items || [];
       } else if (view === "rank") {
-        endpoint = "/api/v1/rank" + (append && state.cursor ? "?cursor=" + encodeURIComponent(state.cursor) : "");
+        const params = new URLSearchParams();
+        if (state.rankContent && state.rankContent !== "all") params.set("content", state.rankContent);
+        if (state.rankBoard) params.set("board", state.rankBoard);
+        if (append && state.cursor) params.set("cursor", state.cursor);
+        endpoint = "/api/v1/rank" + (params.toString() ? "?" + params.toString() : "");
         data = await request(endpoint);
         items = data.items || [];
       } else if (view === "hot") {
@@ -366,24 +384,76 @@
         items = (data.guesses || []).concat(boards);
       }
       if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
+
       const mapped = items.map(normalize).filter((item) => item.id);
-      state.items = append ? state.items.concat(mapped) : mapped;
+      const previousCount = append ? state.items.length : 0;
+      const combined = append ? state.items.concat(mapped) : mapped;
+      const seen = new Set();
+      state.items = combined.filter((item) => {
+        if (!item.id || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+      const addedCount = state.items.length - previousCount;
+      state.pageCount = append ? state.pageCount + 1 : 1;
       state.cursor = data.cursor || data.next_cursor || "";
       state.hasMore = !!data.has_more && !!state.cursor;
+      if (append && mapped.length > 0 && addedCount === 0) state.hasMore = false;
+
+      if (view === "rank") {
+        if (Array.isArray(data.contents)) {
+          state.rankContents = data.contents.filter((content) => content && content.id && content.name !== "演员");
+        }
+        if (data.content) state.rankContent = data.content;
+        if (data.board) state.rankBoard = data.board;
+        state.activeViewKey = viewCacheKey(view);
+      } else if (view === "new") {
+        if (Array.isArray(data.dates)) state.newDates = data.dates.slice();
+        if (data.date) state.newDate = String(data.date).replace(/-/g, "");
+        state.activeViewKey = viewCacheKey(view);
+      }
+
+      renderFilterTags();
       renderCards(state.items);
       if (!append && view === "discover") renderHero(state.items);
-      $("#load-more").hidden = !state.hasMore;
-      setStatus(state.items.length ? ("已载入 " + state.items.length + " 部") : "暂无内容");
+      renderPagination();
+      setStatus(state.items.length
+        ? ("已载入 " + state.items.length + " 部" + (state.pageCount > 1 ? " · 第 " + state.pageCount + " 页" : ""))
+        : "暂无内容");
       saveActiveView();
     } catch (error) {
       if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
       setStatus(error.message || "加载失败", true);
       if (!append) $("#series-grid").innerHTML = '<div class="empty-state">片库暂时没有响应。<br>请检查 N1 网络后点击刷新。</div>';
     } finally {
-      if (loadID === state.loadSequence) setBusy(false);
+      if (loadID === state.loadSequence) {
+        setBusy(false);
+        renderPagination();
+        // Match 开心果的预加载手感: load two pages before waiting for scroll,
+        // then continue when the viewer comes within roughly one screen of the end.
+        const scheduledView = state.view;
+        const scheduledKey = state.activeViewKey;
+        if (state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
+          window.setTimeout(() => {
+            if (state.view === scheduledView && state.activeViewKey === scheduledKey &&
+                !state.busy && state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
+              loadView(scheduledView, true);
+            }
+          }, 120);
+        }
+      }
     }
   }
 
+  function isNearPageEnd() {
+    const remaining = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+    return remaining <= Math.max(750, window.innerHeight * 0.85);
+  }
+
+  function maybeAutoLoadMore() {
+    if (!state.hasMore || state.busy || !["discover", "search", "rank", "new"].includes(state.view)) return;
+    if (state.pageCount < 2 || isNearPageEnd()) loadView(state.view, true);
+  }
   function stopPlayback() {
     const video = $("#web-player");
     if (!video) return;
@@ -693,10 +763,44 @@
   $("#search-form").addEventListener("submit", (event) => {
     event.preventDefault();
     if (!$("#search-input").value.trim()) return;
-    loadView("search", false);
+    state.searchType = "all";
+    loadView("search", false, true);
   });
   $("#refresh-button").addEventListener("click", () => loadView(state.view, false, true));
   $("#load-more").addEventListener("click", () => loadView(state.view, true));
+  $("#filter-tags").addEventListener("click", (event) => {
+    const button = event.target.closest(".filter-tag");
+    if (!button) return;
+    const kind = button.dataset.filterKind;
+    const value = button.dataset.filterValue;
+    if (!kind || value == null) return;
+    if (kind === "channel" && value !== state.discoverChannel) {
+      state.discoverChannel = value;
+      loadView("discover", false, true);
+    } else if (kind === "search-type" && value !== state.searchType) {
+      state.searchType = value;
+      loadView("search", false, true);
+    } else if (kind === "rank-content" && value !== state.rankContent) {
+      state.rankContent = value;
+      state.rankBoard = "";
+      loadView("rank", false, true);
+    } else if (kind === "rank-board" && value !== state.rankBoard) {
+      state.rankBoard = value;
+      loadView("rank", false, true);
+    } else if (kind === "new-date" && value !== state.newDate) {
+      state.newDate = value;
+      loadView("new", false, true);
+    }
+  });
+  window.addEventListener("scroll", () => {
+    if (state.autoLoadScheduled) return;
+    state.autoLoadScheduled = true;
+    window.requestAnimationFrame(() => {
+      state.autoLoadScheduled = false;
+      maybeAutoLoadMore();
+    });
+  }, {passive:true});
+  window.addEventListener("resize", maybeAutoLoadMore, {passive:true});
   $("#series-grid").addEventListener("click", (event) => {
     const card = event.target.closest(".series-card");
     if (card) openDetail(card.dataset.id);

@@ -2,9 +2,10 @@ package imageproxy
 
 import (
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -123,4 +124,157 @@ func TestServeHTTPFollowsValidatedCDNRedirects(t *testing.T) {
 		t.Fatalf("redirect response status=%d body=%q",rec.Code,rec.Body.String())
 	}
 	if finalCalls!=1 {t.Fatalf("final CDN calls=%d, want 1",finalCalls)}
+}
+
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func imageResponse(req *http.Request, status int, contentType string, body []byte) *http.Response {
+	header := make(http.Header)
+	header.Set("Content-Type", contentType)
+	return &http.Response{
+		StatusCode:    status,
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(string(body))),
+		ContentLength: int64(len(body)),
+		Request:       req,
+	}
+}
+
+func TestOfficialJPEGVariantURL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{
+			name: "known byteimg HEIC object",
+			raw:  "https://p3-fqnovelpic.byteimg.com/novel-pic/2026/cover.heic~tplv-w640.heic?signature=discarded",
+			want: "https://p3-novel.byteimg.com/novel-pic/2026/cover.heic~tplv-shrink:640:0.image",
+			ok:   true,
+		},
+		{
+			name: "known fqnovelpic host",
+			raw:  "https://static.fqnovelpic.com/novel-pic/cover.heic~tplv-existing.heic",
+			want: "https://p3-novel.byteimg.com/novel-pic/cover.heic~tplv-shrink:640:0.image",
+			ok:   true,
+		},
+		{
+			name: "ordinary jpeg",
+			raw:  "https://p3-novel.byteimg.com/novel-pic/cover.jpg~tplv-cover.jpg",
+			ok:   false,
+		},
+		{
+			name: "untrusted domain",
+			raw:  "https://notbyteimg.com/novel-pic/cover.heic~tplv-cover.heic",
+			ok:   false,
+		},
+		{
+			name: "different path",
+			raw:  "https://p3-novel.byteimg.com/other/cover.heic~tplv-cover.heic",
+			ok:   false,
+		},
+		{
+			name: "no transformation marker",
+			raw:  "https://p3-novel.byteimg.com/novel-pic/cover.heic",
+			ok:   false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := officialJPEGVariant(test.raw)
+			if ok != test.ok {
+				t.Fatalf("ok=%t, want %t; URL=%q", ok, test.ok, got)
+			}
+			if got != test.want {
+				t.Fatalf("URL=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestServeHTTPUsesOfficialJPEGVariant(t *testing.T) {
+	source := "https://p3-fqnovelpic.byteimg.com/novel-pic/cover.heic~tplv-existing.heic?signature=one"
+	p := New()
+	tokenURL := p.Register(source)
+	if tokenURL == "" {
+		t.Fatal("Register rejected eligible image URL")
+	}
+	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
+	p.validate = func(*url.URL) error { return nil }
+
+	var requested []string
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xd9}
+	p.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requested = append(requested, req.URL.String())
+		if req.URL.Host != "p3-novel.byteimg.com" {
+			t.Fatalf("expected the official JPEG variant first, requested %s", req.URL)
+		}
+		return imageResponse(req, http.StatusOK, "image/jpeg", jpeg), nil
+	})}
+
+	req := httptest.NewRequest(http.MethodGet, tokenURL, nil)
+	req.SetPathValue("token", token)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+
+	wantURL := "https://p3-novel.byteimg.com/novel-pic/cover.heic~tplv-shrink:640:0.image"
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("Content-Type=%q, want image/jpeg", got)
+	}
+	if rec.Body.String() != string(jpeg) {
+		t.Fatalf("body=%v, want JPEG bytes %v", rec.Body.Bytes(), jpeg)
+	}
+	if len(requested) != 1 || requested[0] != wantURL {
+		t.Fatalf("requested URLs=%v, want [%q]", requested, wantURL)
+	}
+}
+
+func TestServeHTTPFallsBackWhenOfficialVariantIsNotJPEG(t *testing.T) {
+	source := "https://p3-fqnovelpic.byteimg.com/novel-pic/cover.heic~tplv-existing.heic?signature=one"
+	p := New()
+	tokenURL := p.Register(source)
+	if tokenURL == "" {
+		t.Fatal("Register rejected eligible image URL")
+	}
+	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
+	p.validate = func(*url.URL) error { return nil }
+
+	var requested []string
+	originalBytes := []byte("original-heic-bytes")
+	p.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requested = append(requested, req.URL.String())
+		if req.URL.Host == "p3-novel.byteimg.com" {
+			return imageResponse(req, http.StatusOK, "image/jpeg", []byte("not-a-jpeg")), nil
+		}
+		return imageResponse(req, http.StatusOK, "image/heic", originalBytes), nil
+	})}
+
+	req := httptest.NewRequest(http.MethodGet, tokenURL, nil)
+	req.SetPathValue("token", token)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/heic" {
+		t.Fatalf("fallback Content-Type=%q, want image/heic", got)
+	}
+	if rec.Body.String() != string(originalBytes) {
+		t.Fatalf("fallback body=%q, want %q", rec.Body.String(), originalBytes)
+	}
+	if len(requested) != 2 ||
+		!strings.Contains(requested[0], "p3-novel.byteimg.com") ||
+		!strings.Contains(requested[1], "p3-fqnovelpic.byteimg.com") {
+		t.Fatalf("expected variant then original fallback, got %v", requested)
+	}
 }

@@ -2,6 +2,7 @@
   "use strict";
 
   const $ = (selector) => document.querySelector(selector);
+  const INITIAL_PRELOAD_TARGET = 100;
   function todayDateKey() {
     const now = new Date();
     return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
@@ -244,6 +245,7 @@
     }
     let label = "已载入 " + state.items.length + " 部";
     if (state.pageCount > 0) label += " · 第 " + state.pageCount + " 页";
+    if (state.hasMore && state.items.length < INITIAL_PRELOAD_TARGET) label += " · 首批预载 " + state.items.length + "/" + INITIAL_PRELOAD_TARGET;
     if (state.busy) label += " · 加载中";
     else if (state.hasMore) label += " · 向下滚动自动加载";
     else label += " · 已加载完毕";
@@ -284,6 +286,15 @@
     }
   }
 
+  function scheduleAutoLoad(view, key, delay) {
+    window.setTimeout(() => {
+      if (state.view === view && state.activeViewKey === key && !state.busy && state.hasMore &&
+          (state.items.length < INITIAL_PRELOAD_TARGET || isNearPageEnd())) {
+        loadView(view, true);
+      }
+    }, delay == null ? 40 : delay);
+  }
+
   function restoreView(view, key, cached) {
     state.view = view;
     state.activeViewKey = key;
@@ -306,6 +317,7 @@
     renderPagination();
     setStatus("已从页面缓存恢复 · " + state.items.length + " 部");
     window.requestAnimationFrame(() => window.scrollTo({top:cached.scrollY || 0,behavior:"auto"}));
+    if (state.hasMore && state.items.length < INITIAL_PRELOAD_TARGET) scheduleAutoLoad(view, key, 40);
   }
 
   async function loadView(view, append, force) {
@@ -426,9 +438,11 @@
       renderCards(append ? state.items.slice(previousCount) : state.items, append);
       if (!append && view === "discover") renderHero(state.items);
       renderPagination();
-      setStatus(state.items.length
+      let statusMessage = state.items.length
         ? ("已载入 " + state.items.length + " 部" + (state.pageCount > 1 ? " · 第 " + state.pageCount + " 页" : ""))
-        : "暂无内容");
+        : "暂无内容";
+      if (state.items.length < INITIAL_PRELOAD_TARGET && state.hasMore) statusMessage += " · 正在准备首批 " + INITIAL_PRELOAD_TARGET + " 部";
+      setStatus(statusMessage);
       saveActiveView();
       loadSucceeded = true;
     } catch (error) {
@@ -439,17 +453,13 @@
       if (loadID === state.loadSequence) {
         setBusy(false);
         renderPagination();
-        // Match 开心果的预加载手感: load two pages before waiting for scroll,
-        // then continue when the viewer comes within roughly one screen of the end.
+        // Build a useful random-pick pool before waiting for the viewer to scroll.
+        // Each page renders immediately; at 100 items, resume near-bottom loading.
         const scheduledView = state.view;
         const scheduledKey = state.activeViewKey;
-        if (loadSucceeded && state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
-          window.setTimeout(() => {
-            if (state.view === scheduledView && state.activeViewKey === scheduledKey &&
-                !state.busy && state.hasMore && (state.pageCount < 2 || isNearPageEnd())) {
-              loadView(scheduledView, true);
-            }
-          }, 120);
+        if (loadSucceeded && state.hasMore &&
+            (state.items.length < INITIAL_PRELOAD_TARGET || isNearPageEnd())) {
+          scheduleAutoLoad(scheduledView, scheduledKey, 40);
         }
       }
     }

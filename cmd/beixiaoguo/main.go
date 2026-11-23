@@ -18,7 +18,7 @@ import (
 	"github.com/xiaobei206/beixiaoguo-web/internal/api"
 )
 
-var version = "0.1.5"
+var version = "0.1.6"
 
 func main() {
 	logger := log.New(os.Stdout, "[beixiaoguo] ", log.LstdFlags|log.Lmicroseconds)

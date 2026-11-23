@@ -227,57 +227,151 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 	_,_=w.Write(body)
 }
 
-func (p *Proxy) fetch(ctx context.Context,item *entry,raw string)([]byte,string,string,error) {
+// officialJPEGVariant returns the browser-compatible JPEG rendition published by
+// the official image CDN for eligible Red Fruit HEIC covers. It is deliberately
+// limited to the known CDN domains and /novel-pic/ object path.
+func officialJPEGVariant(raw string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	knownCDN := host == "fqnovelpic.com" ||
+		strings.HasSuffix(host, ".fqnovelpic.com") ||
+		host == "byteimg.com" ||
+		strings.HasSuffix(host, ".byteimg.com")
+	path := u.Path
+	if !knownCDN ||
+		!strings.HasPrefix(path, "/novel-pic/") ||
+		!strings.Contains(path, "~") ||
+		!strings.HasSuffix(strings.ToLower(path), ".heic") {
+		return "", false
+	}
+
+	// The CDN variant changes the representation, not the underlying image
+	// object. Do not carry the original signature/query into the rendition URL.
+	basePath := strings.SplitN(path, "~", 2)[0]
+	u.Scheme = "https"
+	u.Host = "p3-novel.byteimg.com"
+	u.Path = basePath + "~tplv-shrink:640:0.image"
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.String(), true
+}
+
+func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, string, string, error) {
 	item.fetchMu.Lock()
 	defer item.fetchMu.Unlock()
-	p.mu.Lock()
-	if len(item.body)>0 && time.Since(item.cachedAt)<cacheLifetime {
-		body,contentType,etag:=item.body,item.contentType,item.etag
-		p.mu.Unlock()
-		return body,contentType,etag,nil
-	}
-	raw=item.sourceURL
-	p.mu.Unlock()
-	u,err:=url.Parse(raw)
-	if err!=nil || p.validate(u)!=nil {return nil,"","",fmt.Errorf("invalid cover source")}
-	req,err:=http.NewRequestWithContext(ctx,http.MethodGet,raw,nil)
-	if err!=nil {return nil,"","",err}
-	req.Header.Set("Accept","image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
-	req.Header.Set("User-Agent","Beixiaoguo/0.1.3 image-proxy")
-	resp,err:=p.client.Do(req)
-	if err!=nil {return nil,"","",err}
-	defer resp.Body.Close()
-	if resp.StatusCode!=http.StatusOK {
-		finalHost:=""
-		if resp.Request!=nil && resp.Request.URL!=nil {finalHost=resp.Request.URL.Hostname()}
-		return nil,"","",fmt.Errorf("cover server returned HTTP %d after redirect (final_host=%q)",resp.StatusCode,finalHost)
-	}
-	body,err:=io.ReadAll(io.LimitReader(resp.Body,maxImageBytes+1))
-	if err!=nil {return nil,"","",err}
-	if len(body)==0 || len(body)>maxImageBytes {return nil,"","",fmt.Errorf("cover image size is invalid")}
-	contentType,_,_:=mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if contentType=="" || strings.EqualFold(contentType,"application/octet-stream") {
-		contentType=http.DetectContentType(body)
-	}
-	if !strings.HasPrefix(strings.ToLower(contentType),"image/") {
-		return nil,"","",fmt.Errorf("upstream response is not an image")
-	}
-	finalHost:=""
-	if resp.Request!=nil && resp.Request.URL!=nil {finalHost=resp.Request.URL.Hostname()}
-	p.logger.Printf("image proxy fetched source_host=%q final_host=%q content_type=%q bytes=%d",u.Hostname(),finalHost,contentType,len(body))
-	sum:=sha256.Sum256(body)
-	newETag:="\""+hex.EncodeToString(sum[:])+"\""
 
 	p.mu.Lock()
-	delta:=int64(len(body))-int64(len(item.body))
-	item.body=body
-	item.contentType=contentType
-	item.etag=newETag
-	item.cachedAt=time.Now()
-	p.cacheBytes+=delta
+	if len(item.body) > 0 && time.Since(item.cachedAt) < cacheLifetime {
+		body, contentType, etag := item.body, item.contentType, item.etag
+		p.mu.Unlock()
+		return body, contentType, etag, nil
+	}
+	raw = item.sourceURL
+	p.mu.Unlock()
+
+	sourceURL, err := url.Parse(raw)
+	if err != nil || p.validate(sourceURL) != nil {
+		return nil, "", "", fmt.Errorf("invalid cover source")
+	}
+
+	if variantURL, ok := officialJPEGVariant(raw); ok {
+		body, contentType, variantErr := p.fetchSource(ctx, raw, variantURL, true)
+		if variantErr == nil {
+			return p.cacheFetched(item, body, contentType)
+		}
+		if ctx.Err() != nil {
+			return nil, "", "", ctx.Err()
+		}
+		p.logger.Printf("image proxy JPEG variant failed source_host=%q error=%q; falling back to original",
+			sourceURL.Hostname(), variantErr.Error())
+	}
+
+	body, contentType, err := p.fetchSource(ctx, raw, raw, false)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return p.cacheFetched(item, body, contentType)
+}
+
+func (p *Proxy) fetchSource(ctx context.Context, sourceRaw, requestRaw string, requireJPEG bool) ([]byte, string, error) {
+	sourceURL, err := url.Parse(sourceRaw)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid cover source URL")
+	}
+	requestURL, err := url.Parse(requestRaw)
+	if err != nil || p.validate(requestURL) != nil {
+		return nil, "", fmt.Errorf("invalid cover request URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestRaw, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
+	req.Header.Set("User-Agent", "Beixiaoguo/0.1.4 image-proxy")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	finalHost := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalHost = resp.Request.URL.Hostname()
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("cover server returned HTTP %d after redirect (final_host=%q)", resp.StatusCode, finalHost)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(body) == 0 || len(body) > maxImageBytes {
+		return nil, "", fmt.Errorf("cover image size is invalid")
+	}
+	contentType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if requireJPEG {
+		if !hasJPEGSignature(body) {
+			return nil, "", fmt.Errorf("official cover variant did not return JPEG bytes")
+		}
+		// The file signature is authoritative for this known JPEG endpoint.
+		contentType = "image/jpeg"
+	} else {
+		if contentType == "" || strings.EqualFold(contentType, "application/octet-stream") {
+			contentType = http.DetectContentType(body)
+		}
+		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+			return nil, "", fmt.Errorf("upstream response is not an image")
+		}
+	}
+	p.logger.Printf("image proxy fetched source_host=%q final_host=%q content_type=%q bytes=%d official_jpeg_variant=%t",
+		sourceURL.Hostname(), finalHost, contentType, len(body), requireJPEG)
+	return body, contentType, nil
+}
+
+func hasJPEGSignature(body []byte) bool {
+	return len(body) >= 3 && body[0] == 0xff && body[1] == 0xd8 && body[2] == 0xff
+}
+
+func (p *Proxy) cacheFetched(item *entry, body []byte, contentType string) ([]byte, string, string, error) {
+	sum := sha256.Sum256(body)
+	etag := "\"" + hex.EncodeToString(sum[:]) + "\""
+
+	p.mu.Lock()
+	delta := int64(len(body)) - int64(len(item.body))
+	item.body = body
+	item.contentType = contentType
+	item.etag = etag
+	item.cachedAt = time.Now()
+	p.cacheBytes += delta
 	p.evictLocked(item.token)
 	p.mu.Unlock()
-	return body,contentType,newETag,nil
+	return body, contentType, etag, nil
 }
 
 func (p *Proxy) pruneLocked(now time.Time) {

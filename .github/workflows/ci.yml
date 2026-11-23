@@ -29,6 +29,8 @@ jobs:
         run: go test ./...
       - name: Check browser JavaScript syntax
         run: node --check internal/webui/assets/app.js
+      - name: Check N1 installer shell syntax
+        run: sh -n scripts/install-n1.sh
       - name: Prepare artifact directory
         run: mkdir -p dist
       - name: Build Linux AMD64

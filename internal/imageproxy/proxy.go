@@ -243,7 +243,7 @@ func (p *Proxy) fetch(ctx context.Context,item *entry,raw string)([]byte,string,
 	req,err:=http.NewRequestWithContext(ctx,http.MethodGet,raw,nil)
 	if err!=nil {return nil,"","",err}
 	req.Header.Set("Accept","image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
-	req.Header.Set("User-Agent","Beixiaoguo/0.1.2 image-proxy")
+	req.Header.Set("User-Agent","Beixiaoguo/0.1.3 image-proxy")
 	resp,err:=p.client.Do(req)
 	if err!=nil {return nil,"","",err}
 	defer resp.Body.Close()

@@ -63,10 +63,20 @@ say "正在下载贝小果 v${VERSION}（${ARCH}）……"
 wget -T 60 -qO "${WORK_DIR}/${ASSET}" "${RELEASE_URL}/${ASSET}"
 wget -T 30 -qO "${WORK_DIR}/${SUMS}" "${RELEASE_URL}/${SUMS}"
 
-(
-  cd "$WORK_DIR"
-  sha256sum -c "$SUMS"
-)
+# The release checksum manifest contains both CPU architectures, while this
+# device downloads only one binary. Select exactly the matching entry first.
+if ! awk -v asset="$ASSET" '
+  $2 == asset { print; count++ }
+  END { if (count != 1) exit 1 }
+' "$WORK_DIR/$SUMS" > "$WORK_DIR/selected.sha256"; then
+  fail "SHA-256 清单中没有且仅有一个当前架构文件：$ASSET"
+  exit 1
+fi
+
+if ! (cd "$WORK_DIR" && sha256sum -c selected.sha256); then
+  fail "ARM/AMD64 程序 SHA-256 校验失败，已停止安装；旧程序未被停止"
+  exit 1
+fi
 
 stop_old_processes() {
   for proc in /proc/[0-9]*; do

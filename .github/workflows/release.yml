@@ -66,10 +66,10 @@ jobs:
           overwrite_files: true
           body: |
             ## 本次更新
-            - 新增 iOS / Safari Media Session 锁屏媒体信息：显示当前短剧封面、短剧名称和集数。
+            - iOS 锁屏封面改用页面已加载图片生成的 512×512 JPEG 数据图，提供显式尺寸 / MIME，并保留 N1 代理绝对地址备用。
             - 锁屏支持播放、暂停、上一集、下一集及进度跳转，直接控制当前网页视频和分集播放流程。
             - 播放状态和进度实时同步；切集更新锁屏信息，关闭播放器后清理旧媒体信息。
-            - 封面通过 N1 同源图片代理读取，不将上游签名 URL 或媒体密钥暴露给浏览器。
+            - 封面源图仍由 N1 同源图片代理提供；JPEG 转换只在浏览器内存进行，不修改视频播放和 CENC 解密链路。
             - 保留 v0.1.20 的独立 PiP 入口及 iOS standalone 能力提示。
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`

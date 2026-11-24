@@ -146,7 +146,12 @@
     $("#section-kicker").textContent = labels[0];
     $("#section-title").textContent = labels[1];
     $("#section-subtitle").textContent = labels[2];
-  
+    document.querySelectorAll(".nav-item").forEach((button) => {
+      button.classList.toggle("active", button.dataset.view === view);
+    });
+    $("#welcome").hidden = view !== "discover";
+  }
+
   function formatBytes(value) {
     const bytes = Number(value) || 0;
     if (bytes < 1024) return bytes + " B";
@@ -234,12 +239,6 @@
     } catch (error) {
       $("#settings-live").textContent = error.message || "读取设置失败";
     }
-  }
-
-  document.querySelectorAll(".nav-item").forEach((button) => {
-      button.classList.toggle("active", button.dataset.view === view);
-    });
-    $("#welcome").hidden = view !== "discover";
   }
 
   function renderCards(items, append) {

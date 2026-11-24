@@ -395,6 +395,7 @@ mediaSession.handlers.get("previoustrack")();
 await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
 assert.equal(mediaSession.metadata?.artist, "第 1 集 · 贝小果", "Lock-screen metadata must update when returning to the previous episode");
+window.navigator.userAgent = "iPhone";
 window.navigator.standalone = true;
 video._pipSupported = false;
 listeners.get("#web-player")?.get("loadedmetadata")?.();

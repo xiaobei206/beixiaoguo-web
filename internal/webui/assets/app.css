@@ -323,3 +323,5 @@ body { padding-top:env(safe-area-inset-top); }
   .topbar-actions { gap:6px; }
   .install-button { padding:7px 9px; font-size:11px; }
 }
+
+.player-action.unavailable { opacity:.58; border-style:dashed; cursor:help; }

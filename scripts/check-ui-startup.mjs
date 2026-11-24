@@ -4,6 +4,7 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../internal/webui/assets/app.js", import.meta.url), "utf8");
 const cssSource = fs.readFileSync(new URL("../internal/webui/assets/app.css", import.meta.url), "utf8");
+const manifestSource = fs.readFileSync(new URL("../internal/webui/manifest.webmanifest", import.meta.url), "utf8");
 const elements = new Map();
 const listeners = new Map();
 const requests = [];
@@ -159,4 +160,33 @@ webFullscreenClick();
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Web fullscreen can be exited with its button");
 assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must expand the detail dialog to viewport size");
 assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
-console.log("UI smoke test passed: startup, settings, combined detail requests, and interactive web fullscreen.");
+const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");
+assert.equal(typeof episodeGridClick, "function", "The series detail must expose episode selection");
+episodeGridClick({
+  target: {
+    closest(selector) {
+      return selector === ".episode-chip"
+        ? { dataset: { episodeId: "7100000000000201" }, disabled: false }
+        : null;
+    }
+  }
+});
+await new Promise((resolve) => setImmediate(resolve));
+await new Promise((resolve) => setImmediate(resolve));
+const holdDown = listeners.get("#player-hold-speed")?.get("pointerdown");
+const holdUp = listeners.get("#player-hold-speed")?.get("pointerup");
+assert.equal(typeof holdDown, "function", "The player must expose a hold-to-boost button");
+assert.equal(typeof holdUp, "function", "The hold-to-boost button must restore speed on release");
+holdDown({ type: "pointerdown", button: 0, pointerId: 7 });
+assert.equal(getElement("#web-player").playbackRate, 2, "Holding the boost button must temporarily set playbackRate to 2");
+holdUp();
+assert.equal(getElement("#web-player").playbackRate, 1, "Releasing the boost button must restore the configured playback rate");
+
+const installClick = listeners.get("#install-app-button")?.get("click");
+assert.equal(typeof installClick, "function", "Home page must expose an install/add-to-home-screen action");
+await installClick();
+assert.equal(getElement("#install-dialog").open, true, "The install action must open platform-specific installation guidance");
+assert.match(manifestSource, /"display": "standalone"/, "Manifest must request standalone app display");
+assert.match(manifestSource, /192x192/, "Manifest must include a 192px icon");
+assert.match(manifestSource, /512x512/, "Manifest must include a 512px icon");
+console.log("UI smoke test passed: startup, settings, details, web fullscreen, hold-to-boost restoration, installation guide, and PWA manifest.");

@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111116">
   <meta name="description" content="贝小果：家庭局域网短剧浏览与播放">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="贝小果">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <title>贝小果 · 短剧时间</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script defer src="/assets/app.js"></script>
@@ -23,6 +28,7 @@
       </form>
       <div class="topbar-actions">
         <span class="lan-pill"><span></span> 家庭局域网</span>
+        <button id="install-app-button" class="install-button" type="button" aria-label="添加贝小果到桌面">⇧ 添加到桌面</button>
         <button id="settings-button" class="settings-button" type="button" aria-label="缓存与预热设置">⚙ 设置</button>
       </div>
     </header>
@@ -71,7 +77,7 @@
     </main>
 
     <footer class="footer">
-      <span>贝小果 <b>0.1.16</b></span>
+      <span>贝小果 <b>0.1.17</b></span>
       <span>只在你的家庭网络中提供服务 · 浏览数据保存在当前浏览器</span>
     </footer>
   </div>
@@ -79,6 +85,11 @@
   <dialog id="detail-dialog" class="detail-dialog">
     <button id="dialog-close" class="dialog-close" type="button" aria-label="关闭">×</button>
     <div id="detail-content" class="detail-content"></div>
+  </dialog>
+
+  <dialog id="install-dialog" class="detail-dialog install-dialog">
+    <button id="install-dialog-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+    <div id="install-dialog-content" class="detail-content install-dialog-content"></div>
   </dialog>
 
   <dialog id="cast-dialog" class="detail-dialog cast-dialog">
@@ -134,6 +145,7 @@
     </div>
   </dialog>
 
+  <button id="pip-hold-speed" class="pip-hold-speed hold-speed-button" type="button" aria-label="按住临时 2 倍速，松开恢复已设置倍速" hidden>按住 2×</button>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

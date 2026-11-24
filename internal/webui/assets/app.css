@@ -283,3 +283,43 @@ main { min-height:65vh; }
   #playback-panel.web-fullscreen .player-nav { padding-top:3px; }
   #playback-panel.web-fullscreen .playback-status { display:none; }
 }
+
+
+/* Add-to-home-screen / install entry */
+.topbar-actions { display:flex; align-items:center; gap:9px; flex:none; }
+.install-button {
+  flex:none; padding:8px 11px; border:1px solid rgba(241,106,138,.34); border-radius:10px;
+  color:#ffdce5; background:rgba(241,106,138,.10); cursor:pointer; font-size:12px; white-space:nowrap;
+}
+.install-button:hover { background:rgba(241,106,138,.17); }
+.install-dialog { width:min(520px,calc(100% - 28px)); }
+.install-dialog-content h2 { margin:0 0 14px; font-size:21px; }
+.install-steps { display:grid; gap:12px; padding-left:23px; color:#e2d9e1; font-size:14px; line-height:1.7; }
+.install-note { padding:12px 14px; border-radius:10px; background:rgba(255,255,255,.045); color:var(--muted); font-size:12px; line-height:1.7; }
+body { padding-top:env(safe-area-inset-top); }
+
+/* Hold-to-boost is deliberately separate from the user's selected playback speed. */
+.hold-speed-button { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; touch-action:none; }
+.hold-speed-button.holding { border-color:#ff93ac; color:#fff; background:#b8436c; box-shadow:0 0 0 3px rgba(241,106,138,.18); }
+.player-speed-indicator {
+  position:absolute; z-index:4; left:50%; top:50%; transform:translate(-50%,-50%);
+  padding:10px 16px; border:1px solid rgba(255,255,255,.2); border-radius:99px;
+  color:#fff; background:rgba(20,13,21,.78); box-shadow:0 8px 30px rgba(0,0,0,.35);
+  font-size:14px; font-weight:750; pointer-events:none;
+}
+.player-speed-indicator[hidden], .pip-hold-speed[hidden] { display:none !important; }
+.pip-hold-speed {
+  position:fixed; z-index:10002; right:max(14px,env(safe-area-inset-right));
+  bottom:max(18px,env(safe-area-inset-bottom)); min-height:46px; padding:10px 16px;
+  border:1px solid rgba(255,255,255,.28); border-radius:999px; color:#fff;
+  background:rgba(184,67,108,.96); box-shadow:0 8px 28px rgba(0,0,0,.45);
+  font-size:13px; font-weight:750; cursor:pointer;
+}
+@media (max-width:760px) {
+  .topbar-actions { flex:1 1 auto; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
+  .topbar-actions .lan-pill { display:none; }
+}
+@media (max-width:520px) {
+  .topbar-actions { gap:6px; }
+  .install-button { padding:7px 9px; font-size:11px; }
+}

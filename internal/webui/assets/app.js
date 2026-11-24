@@ -6,6 +6,7 @@
   const playbackClientId = "bxg-web-" + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2));
   let playbackHeartbeatTimer = 0;
   let settingsRefreshTimer = 0;
+  let deferredInstallPrompt = null;
   function todayDateKey() {
     const now = new Date();
     return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
@@ -33,7 +34,7 @@
     loadSequence: 0,
     autoLoadScheduled: false,
     detailRequestId: 0,
-    playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0}
+    playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false}
   };
 
   const navLabels = {
@@ -613,9 +614,135 @@
     if (!state.hasMore || state.busy || !["discover", "search", "rank", "new"].includes(state.view)) return;
     if (isNearPageEnd()) loadView(state.view, true);
   }
+  function beginTemporaryBoost() {
+    const video = $("#web-player");
+    if (!video || video.paused || video.ended || state.playback.index < 0) return false;
+    if (state.playback.temporaryBoost) return true;
+    state.playback.temporaryBoost = true;
+    video.playbackRate = 2;
+    ["#player-hold-speed", "#pip-hold-speed"].forEach((selector) => {
+      const button = $(selector);
+      if (button) button.classList.add("holding");
+    });
+    const indicator = $("#player-speed-indicator");
+    if (indicator) indicator.hidden = false;
+    return true;
+  }
+
+  function endTemporaryBoost() {
+    if (!state.playback.temporaryBoost) return;
+    state.playback.temporaryBoost = false;
+    const video = $("#web-player");
+    if (video) video.playbackRate = Number(state.playback.speed) || 1;
+    ["#player-hold-speed", "#pip-hold-speed"].forEach((selector) => {
+      const button = $(selector);
+      if (button) button.classList.remove("holding");
+    });
+    const indicator = $("#player-speed-indicator");
+    if (indicator) indicator.hidden = true;
+  }
+
+  function bindHoldToAccelerate(button) {
+    if (!button || button.dataset.holdBound === "true") return;
+    button.dataset.holdBound = "true";
+    let pressed = false;
+    const start = (event) => {
+      if (event && event.type === "pointerdown" && event.button !== undefined && event.button !== 0) return;
+      if (pressed) return;
+      pressed = true;
+      beginTemporaryBoost();
+      if (event && event.pointerId !== undefined && button.setPointerCapture) {
+        try { button.setPointerCapture(event.pointerId); } catch (_) {}
+      }
+      if (event && event.type === "keydown" && event.preventDefault) event.preventDefault();
+    };
+    const stop = () => {
+      if (!pressed) return;
+      pressed = false;
+      endTemporaryBoost();
+    };
+    button.addEventListener("pointerdown", start);
+    ["pointerup", "pointercancel", "lostpointercapture", "pointerleave", "blur"].forEach((type) => button.addEventListener(type, stop));
+    button.addEventListener("keydown", (event) => {
+      if ((event.code === "Space" || event.code === "Enter") && !event.repeat) start(event);
+    });
+    button.addEventListener("keyup", (event) => {
+      if (event.code === "Space" || event.code === "Enter") stop();
+    });
+    button.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
+
+  function syncPictureInPictureHoldButton() {
+    const video = $("#web-player");
+    const button = $("#pip-hold-speed");
+    if (!button) return;
+    const active = !!video && (
+      document.pictureInPictureElement === video ||
+      video.webkitPresentationMode === "picture-in-picture"
+    );
+    button.hidden = !active;
+  }
+
+  function isStandaloneApp() {
+    const nav = window.navigator || {};
+    return !!((window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || nav.standalone === true);
+  }
+
+  function openInstallGuide() {
+    const dialog = $("#install-dialog");
+    const content = $("#install-dialog-content");
+    if (!dialog || !content) return;
+    const nav = window.navigator || {};
+    const userAgent = nav.userAgent || "";
+    const isIOS = /iPhone|iPad|iPod/i.test(userAgent) || (nav.platform === "MacIntel" && nav.maxTouchPoints > 1);
+    if (isStandaloneApp()) {
+      content.innerHTML = '<h2>贝小果已独立运行</h2><p>你正在使用独立窗口打开贝小果。之后直接点主屏幕上的贝小果图标即可，无需回到浏览器输入地址。</p>';
+    } else if (isIOS) {
+      content.innerHTML = '<h2>把贝小果添加到主屏幕</h2><ol class="install-steps"><li>用 <strong>Safari</strong> 打开当前贝小果页面。</li><li>点击分享按钮（方框向上箭头）。</li><li>选择<strong>“添加到主屏幕”</strong>。</li><li>若看到<strong>“作为网页 App 打开”</strong>，请开启后再点“添加”。</li></ol><p class="install-note">以后从主屏幕图标启动，贝小果会以独立窗口打开，不再显示 Safari 地址栏和底部工具栏。iOS 系统状态栏仍可能显示。</p>';
+    } else {
+      content.innerHTML = '<h2>把贝小果添加到桌面</h2><ol class="install-steps"><li>打开浏览器右上角菜单。</li><li>选择<strong>“安装应用”</strong>或<strong>“添加到主屏幕”</strong>。</li><li>确认后，从桌面上的贝小果图标启动。</li></ol><p class="install-note">若浏览器没有“安装应用”选项，当前连接可能使用 HTTP。部分浏览器要求 HTTPS 才能安装为独立应用；仍可尝试添加网页快捷方式。</p>';
+    }
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function setupInstallPrompt() {
+    const button = $("#install-app-button");
+    if (!button) return;
+    if (isStandaloneApp()) button.textContent = "已添加到桌面";
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      button.textContent = "安装应用";
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredInstallPrompt = null;
+      button.textContent = "已添加到桌面";
+      showToast("贝小果已安装到桌面");
+    });
+    button.addEventListener("click", async () => {
+      if (deferredInstallPrompt) {
+        const promptEvent = deferredInstallPrompt;
+        deferredInstallPrompt = null;
+        try {
+          await promptEvent.prompt();
+          const choice = await promptEvent.userChoice;
+          if (choice && choice.outcome === "accepted") {
+            button.textContent = "等待安装";
+            showToast("请按浏览器提示完成安装");
+            return;
+          }
+        } catch (_) {}
+      }
+      openInstallGuide();
+    });
+  }
+
   function stopPlayback() {
+    endTemporaryBoost();
     setPlaybackActivity(false);
     const video = $("#web-player");
+    const pipButton = $("#pip-hold-speed");
+    if (pipButton) pipButton.hidden = true;
     if (!video) return;
     video.pause();
     video.removeAttribute("src");
@@ -740,7 +867,7 @@
       const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);
       const fav = state.favorites.some((entry) => entry.id === id);
-      state.playback = {seriesId:id,seriesTitle:title,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0};
+      state.playback = {seriesId:id,seriesTitle:title,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false};
       body.innerHTML =
         '<div class="detail-hero">' +
         (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder detail-placeholder">贝</div>') +
@@ -757,17 +884,19 @@
         '<option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>' +
         '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>' +
         '<option value="2.5">2.5×</option><option value="3">3×</option></select></label>' +
+        '<button id="player-hold-speed" class="player-action hold-speed-button" type="button" aria-label="按住临时 2 倍速，松开恢复已设置倍速">按住 2×</button>' +
         '<button id="player-cast" class="player-action" type="button" title="投屏到 hongguoTV">投屏</button>' +
         '<button id="player-web-fullscreen" class="player-action" type="button" aria-pressed="false">网页全屏</button>' +
         '<button id="player-fullscreen" class="player-action" type="button">系统全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
         '<div id="player-stage" class="player-stage"><video id="web-player" controls controlsList="nofullscreen" playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
-        '<div class="swipe-hint">上滑下一集 · 下滑上一集</div></div>' +
+        '<div id="player-speed-indicator" class="player-speed-indicator" hidden>临时 2× 倍速</div>' +
+        '<div class="swipe-hint">上滑下一集 · 下滑上一集；按住画面临时 2×</div></div>' +
         '<div class="player-nav"><button id="player-prev" type="button">上一集</button><button id="player-next" type="button">下一集</button></div>' +
         '<div id="playback-status" class="playback-status" role="status">选择集数开始播放</div></section>' +
         '<h3 class="episode-heading">选集</h3><div class="episode-grid">' +
         episodes.map((ep) => '<button class="episode-chip" type="button" data-episode-id="' + escapeHTML(ep.id) + '" data-episode-number="' + escapeHTML(ep.number || "") + '"' + (ep.playable === false ? ' disabled title="当前分集不可播放"' : '') + '>' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
-        '</div><div class="player-note">支持 0.5–3 倍速、上下滑切集和自动连播。视频仍由 N1 按需读取与解密；投屏通过局域网交给 hongguoTV。</div>';
+        '</div><div class="player-note">支持 0.5–3 倍速、按住临时 2×、上下滑切集和自动连播。视频仍由 N1 按需读取与解密；投屏通过局域网交给 hongguoTV。</div>';
 
       if (hasMultiSeason) loadSeasonChoices(id, detailRequestID);
       $("#favorite-toggle").addEventListener("click", () => toggleFavorite(normalize(series)));
@@ -789,13 +918,14 @@
       $("#player-prev").addEventListener("click", () => changeEpisode(-1));
       $("#player-next").addEventListener("click", () => changeEpisode(1));
       $("#player-cast").addEventListener("click", openCastPicker);
+      bindHoldToAccelerate($("#player-hold-speed"));
       $("#player-web-fullscreen").addEventListener("click", () => {
         const panel = $("#playback-panel");
         setPlayerWebFullscreen(!panel.classList.contains("web-fullscreen"));
       });
       $("#player-speed").addEventListener("change", (event) => {
         state.playback.speed = Number(event.target.value) || 1;
-        $("#web-player").playbackRate = state.playback.speed;
+        $("#web-player").playbackRate = state.playback.temporaryBoost ? 2 : state.playback.speed;
       });
       $("#player-quality").addEventListener("change", () => {
         const video = $("#web-player");
@@ -804,9 +934,12 @@
       });
       const video = $("#web-player");
       video.addEventListener("playing", () => setPlaybackActivity(true));
-      video.addEventListener("pause", () => setPlaybackActivity(false));
-      video.addEventListener("ended", () => setPlaybackActivity(false));
-      video.addEventListener("error", () => setPlaybackActivity(false));
+      video.addEventListener("pause", () => { endTemporaryBoost(); setPlaybackActivity(false); });
+      video.addEventListener("ended", () => { endTemporaryBoost(); setPlaybackActivity(false); });
+      video.addEventListener("error", () => { endTemporaryBoost(); setPlaybackActivity(false); });
+      video.addEventListener("enterpictureinpicture", syncPictureInPictureHoldButton);
+      video.addEventListener("leavepictureinpicture", () => { endTemporaryBoost(); syncPictureInPictureHoldButton(); });
+      video.addEventListener("webkitpresentationmodechanged", syncPictureInPictureHoldButton);
       video.addEventListener("ended", () => {
         if (state.playback.index >= 0) {
           const next = findPlayableEpisode(state.playback.index, 1);
@@ -819,18 +952,55 @@
         }
       });
       let touchStart = null;
-      $("#player-stage").addEventListener("touchstart", (event) => {
+      let touchMoved = false;
+      let touchBoosted = false;
+      let holdTimer = 0;
+      const stage = $("#player-stage");
+      stage.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
-        touchStart = {x:event.touches[0].clientX,y:event.touches[0].clientY};
+        const touch = event.touches[0];
+        touchStart = {x:touch.clientX,y:touch.clientY};
+        touchMoved = false;
+        touchBoosted = false;
+        window.clearTimeout(holdTimer);
+        holdTimer = window.setTimeout(() => {
+          if (touchStart && !touchMoved) touchBoosted = beginTemporaryBoost();
+        }, 230);
       }, {passive:true});
-      $("#player-stage").addEventListener("touchend", (event) => {
+      stage.addEventListener("touchmove", (event) => {
+        if (!touchStart || !event.touches.length) return;
+        const dx = event.touches[0].clientX - touchStart.x;
+        const dy = event.touches[0].clientY - touchStart.y;
+        if (Math.abs(dx) > 14 || Math.abs(dy) > 14) {
+          touchMoved = true;
+          window.clearTimeout(holdTimer);
+          if (touchBoosted) endTemporaryBoost();
+          touchBoosted = false;
+        }
+      }, {passive:true});
+      stage.addEventListener("touchend", (event) => {
+        window.clearTimeout(holdTimer);
         if (!touchStart || !event.changedTouches.length) return;
         const dx = event.changedTouches[0].clientX - touchStart.x;
         const dy = event.changedTouches[0].clientY - touchStart.y;
+        const wasBoosted = touchBoosted;
         touchStart = null;
-        if (Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;
+        touchBoosted = false;
+        if (wasBoosted) {
+          endTemporaryBoost();
+          return;
+        }
+        if (touchMoved || Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;
         changeEpisode(dy < 0 ? 1 : -1);
       }, {passive:true});
+      stage.addEventListener("touchcancel", () => {
+        window.clearTimeout(holdTimer);
+        touchStart = null;
+        touchMoved = false;
+        if (touchBoosted) endTemporaryBoost();
+        touchBoosted = false;
+      }, {passive:true});
+      stage.addEventListener("contextmenu", (event) => event.preventDefault());
       $("#player-fullscreen").addEventListener("click", async () => {
         const panel = $("#playback-panel");
         if (document.fullscreenElement === panel) {
@@ -897,6 +1067,7 @@
     panel.hidden = false;
     caption.textContent = playback.seriesTitle + " · 第 " + episodeNumber + " 集";
     status.textContent = "正在解析播放地址…";
+    endTemporaryBoost();
     video.pause();
     video.removeAttribute("src");
     video.load();
@@ -1112,6 +1283,18 @@
   });
   $("#detail-dialog").addEventListener("click", (event) => {
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
+  });
+  $("#install-dialog-close").addEventListener("click", () => $("#install-dialog").close());
+  $("#install-dialog").addEventListener("click", (event) => {
+    if (event.target === $("#install-dialog")) $("#install-dialog").close();
+  });
+  setupInstallPrompt();
+  bindHoldToAccelerate($("#pip-hold-speed"));
+  document.addEventListener("visibilitychange", syncPictureInPictureHoldButton);
+  window.addEventListener("focus", syncPictureInPictureHoldButton);
+  window.addEventListener("blur", endTemporaryBoost);
+  document.addEventListener("fullscreenchange", () => {
+    if (document.fullscreenElement) endTemporaryBoost();
   });
   $("#cast-dialog-close").addEventListener("click", () => $("#cast-dialog").close());
   $("#settings-button").addEventListener("click", openSettings);

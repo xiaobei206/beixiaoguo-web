@@ -622,6 +622,29 @@
     video.load();
   }
 
+  function setPlayerWebFullscreen(enabled) {
+    const panel = $("#playback-panel");
+    const dialog = $("#detail-dialog");
+    const button = $("#player-web-fullscreen");
+    const closeButton = $("#player-close");
+    if (!panel || !dialog || !button) return;
+
+    if (enabled) {
+      if (document.fullscreenElement === panel && document.exitFullscreen) {
+        const exitResult = document.exitFullscreen();
+        if (exitResult && typeof exitResult.catch === "function") exitResult.catch(() => {});
+      }
+      panel.classList.add("web-fullscreen");
+      dialog.classList.add("player-web-fullscreen");
+    } else {
+      panel.classList.remove("web-fullscreen");
+      dialog.classList.remove("player-web-fullscreen");
+    }
+    button.textContent = enabled ? "退出网页全屏" : "网页全屏";
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    if (closeButton) closeButton.textContent = enabled ? "退出全屏" : "收起";
+  }
+
   function parseSeasonNumber(raw) {
     const value = String(raw || "");
     if (/^\d+$/.test(value)) return Number(value);
@@ -735,9 +758,10 @@
         '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>' +
         '<option value="2.5">2.5×</option><option value="3">3×</option></select></label>' +
         '<button id="player-cast" class="player-action" type="button" title="投屏到 hongguoTV">投屏</button>' +
-        '<button id="player-fullscreen" class="player-action" type="button">全屏</button>' +
+        '<button id="player-web-fullscreen" class="player-action" type="button" aria-pressed="false">网页全屏</button>' +
+        '<button id="player-fullscreen" class="player-action" type="button">系统全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
-        '<div id="player-stage" class="player-stage"><video id="web-player" controls playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
+        '<div id="player-stage" class="player-stage"><video id="web-player" controls controlsList="nofullscreen" playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
         '<div class="swipe-hint">上滑下一集 · 下滑上一集</div></div>' +
         '<div class="player-nav"><button id="player-prev" type="button">上一集</button><button id="player-next" type="button">下一集</button></div>' +
         '<div id="playback-status" class="playback-status" role="status">选择集数开始播放</div></section>' +
@@ -754,12 +778,21 @@
         if (index >= 0) playEpisodeAt(index);
       });
       $("#player-close").addEventListener("click", () => {
+        const panel = $("#playback-panel");
+        if (panel.classList.contains("web-fullscreen")) {
+          setPlayerWebFullscreen(false);
+          return;
+        }
         stopPlayback();
-        $("#playback-panel").hidden = true;
+        panel.hidden = true;
       });
       $("#player-prev").addEventListener("click", () => changeEpisode(-1));
       $("#player-next").addEventListener("click", () => changeEpisode(1));
       $("#player-cast").addEventListener("click", openCastPicker);
+      $("#player-web-fullscreen").addEventListener("click", () => {
+        const panel = $("#playback-panel");
+        setPlayerWebFullscreen(!panel.classList.contains("web-fullscreen"));
+      });
       $("#player-speed").addEventListener("change", (event) => {
         state.playback.speed = Number(event.target.value) || 1;
         $("#web-player").playbackRate = state.playback.speed;
@@ -800,28 +833,20 @@
       }, {passive:true});
       $("#player-fullscreen").addEventListener("click", async () => {
         const panel = $("#playback-panel");
-        const button = $("#player-fullscreen");
-        if (panel.classList.contains("manual-fullscreen")) {
-          panel.classList.remove("manual-fullscreen");
-          button.textContent = "全屏";
+        if (document.fullscreenElement === panel) {
+          try {
+            if (document.exitFullscreen) await document.exitFullscreen();
+          } catch (_) {}
+          return;
+        }
+        if (typeof panel.requestFullscreen !== "function") {
+          showToast("当前浏览器不支持系统全屏，请使用网页全屏");
           return;
         }
         try {
-          if (panel.requestFullscreen) {
-            await panel.requestFullscreen();
-          } else {
-            panel.classList.add("manual-fullscreen");
-            button.textContent = "退出全屏";
-          }
+          await panel.requestFullscreen();
         } catch (_) {
-          panel.classList.add("manual-fullscreen");
-          button.textContent = "退出全屏";
-        }
-      });
-      document.addEventListener("fullscreenchange", () => {
-        const button = $("#player-fullscreen");
-        if (button && !$("#playback-panel")?.classList.contains("manual-fullscreen")) {
-          button.textContent = document.fullscreenElement ? "退出全屏" : "全屏";
+          showToast("系统全屏不可用，请使用网页全屏");
         }
       });
     } catch (error) {
@@ -1070,7 +1095,21 @@
     }
   });
   $("#dialog-close").addEventListener("click", () => $("#detail-dialog").close());
-  $("#detail-dialog").addEventListener("close", stopPlayback);
+  $("#detail-dialog").addEventListener("close", () => {
+    stopPlayback();
+    setPlayerWebFullscreen(false);
+  });
+  $("#detail-dialog").addEventListener("cancel", (event) => {
+    const dialog = $("#detail-dialog");
+    if (!dialog.classList.contains("player-web-fullscreen")) return;
+    event.preventDefault();
+    setPlayerWebFullscreen(false);
+  });
+  document.addEventListener("fullscreenchange", () => {
+    const button = $("#player-fullscreen");
+    const panel = $("#playback-panel");
+    if (button) button.textContent = document.fullscreenElement === panel ? "退出系统全屏" : "系统全屏";
+  });
   $("#detail-dialog").addEventListener("click", (event) => {
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
   });

@@ -3,12 +3,14 @@ import fs from "node:fs";
 import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../internal/webui/assets/app.js", import.meta.url), "utf8");
+const cssSource = fs.readFileSync(new URL("../internal/webui/assets/app.css", import.meta.url), "utf8");
 const elements = new Map();
 const listeners = new Map();
 const requests = [];
 
 function getElement(selector) {
   if (elements.has(selector)) return elements.get(selector);
+  const classes = new Set();
   const element = {
     selector,
     type: "text",
@@ -22,10 +24,19 @@ function getElement(selector) {
     dataset: {},
     options: [],
     classList: {
-      add() {},
-      remove() {},
-      toggle() {},
-      contains() { return false; }
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+      toggle(name, force) {
+        const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      },
+      contains(name) { return classes.has(name); }
+    },
+    setAttribute(name, value) {
+      if (!this.attributes) this.attributes = {};
+      this.attributes[name] = String(value);
     },
     addEventListener(type, handler) {
       if (!listeners.has(selector)) listeners.set(selector, new Map());
@@ -128,4 +139,24 @@ const detailRequests = requests.slice(beforeDetail).filter((url) => url.includes
 assert.equal(detailRequests.length, 1, "Opening a series must make a single combined detail request");
 assert.ok(detailRequests[0].endsWith("/detail"), "Series detail must use the combined endpoint");
 assert.ok(!detailRequests.some((url) => url.endsWith("/episodes")), "Series detail must not duplicate the upstream request for episodes");
-console.log("UI smoke test passed: initial list loads, settings opens, and detail uses one combined request.");
+
+const webFullscreenClick = listeners.get("#player-web-fullscreen")?.get("click");
+assert.equal(typeof webFullscreenClick, "function", "The player must expose a separate web fullscreen control");
+webFullscreenClick();
+assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), true, "Web fullscreen must use the CSS layout instead of the Fullscreen API");
+assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), true, "The detail dialog must expand to the viewport");
+assert.equal(getElement("#player-web-fullscreen").textContent, "退出网页全屏", "The web fullscreen control must offer an exit action");
+let cancelPrevented = false;
+const cancelFullscreen = listeners.get("#detail-dialog")?.get("cancel");
+assert.equal(typeof cancelFullscreen, "function", "Escape handling must be bound to the detail dialog");
+cancelFullscreen({ preventDefault() { cancelPrevented = true; } });
+assert.equal(cancelPrevented, true, "Escape should exit web fullscreen without closing the series dialog");
+assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), false, "Escape must remove the web fullscreen panel class");
+assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Escape must restore the normal detail dialog");
+webFullscreenClick();
+assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), true, "Web fullscreen can be entered repeatedly");
+webFullscreenClick();
+assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Web fullscreen can be exited with its button");
+assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must expand the detail dialog to viewport size");
+assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
+console.log("UI smoke test passed: startup, settings, combined detail requests, and interactive web fullscreen.");

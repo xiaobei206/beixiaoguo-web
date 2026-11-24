@@ -319,12 +319,14 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 		p.mu.Unlock()
 		return body, contentType, etag, nil
 	}
+	hasStaleRAM := len(item.body) > 0
 	raw = item.sourceURL
 	p.mu.Unlock()
 
-	// Persistent image hits are promoted into the RAM cache so subsequent
-	// requests are served without filesystem reads.
-	if p.disk != nil {
+	// After a process restart there is no RAM entry, so a persistent hit can
+	// be promoted immediately. An expired RAM entry instead triggers a refresh;
+	// ServeHTTP retains it as stale-if-error fallback while the refresh runs.
+	if !hasStaleRAM && p.disk != nil {
 		if body, contentType, ok := p.disk.load(item.sourceKey); ok {
 			etag := p.cacheRAM(item, body, contentType)
 			return body, contentType, etag, nil

@@ -21,11 +21,15 @@ func TestAPICacheStoresExpiresAndEvicts(t *testing.T) {
 }
 
 func TestCacheTTLByOperation(t *testing.T) {
-	if cacheTTL("discover")!=10*time.Minute {t.Fatal("discover TTL changed")}
-	if cacheTTL("search")!=5*time.Minute {t.Fatal("search TTL changed")}
-	if cacheTTL("series")!=30*time.Minute {t.Fatal("series TTL changed")}
-	if cacheTTL("seasons")!=30*time.Minute {t.Fatal("seasons TTL changed")}
-	if cacheTTL("episodes")!=20*time.Minute {t.Fatal("episodes TTL changed")}
+	if cacheTTL("discover")!=70*time.Minute {t.Fatal("discover TTL changed")}
+	if cacheTTL("new-releases")!=70*time.Minute {t.Fatal("new release TTL changed")}
+	if cacheTTL("rank")!=40*time.Minute || cacheTTL("short-rank")!=40*time.Minute {t.Fatal("rank TTL changed")}
+	if cacheTTL("search")!=6*time.Hour {t.Fatal("search TTL changed")}
+	if cacheTTL("hot-search")!=30*time.Minute {t.Fatal("hot-search TTL changed")}
+	if cacheTTL("series")!=24*time.Hour {t.Fatal("series TTL changed")}
+	if cacheTTL("seasons")!=24*time.Hour {t.Fatal("seasons TTL changed")}
+	if cacheTTL("episodes")!=12*time.Hour {t.Fatal("episodes TTL changed")}
+	if cacheTTL("suggest")!=24*time.Hour {t.Fatal("suggest TTL changed")}
 	if cacheTTL("play")!=0 {t.Fatal("playback must not be cached")}
 }
 

@@ -20,10 +20,26 @@ function getElement(selector) {
     hidden: false,
     disabled: false,
     open: false,
+    paused: true,
+    playbackRate: 1,
+    webkitPresentationMode: "inline",
+    _pipSupported: true,
     textContent: "",
     innerHTML: "",
     dataset: {},
     options: [],
+    webkitSupportsPresentationMode(mode) { return mode === "picture-in-picture" && this._pipSupported; },
+    webkitSetPresentationMode(mode) {
+      this.webkitPresentationMode = mode;
+      const callback = listeners.get(this.selector)?.get("webkitpresentationmodechanged");
+      if (callback) callback();
+    },
+    play() {
+      this.paused = false;
+      const callback = listeners.get(this.selector)?.get("playing");
+      if (callback) callback();
+      return Promise.resolve();
+    },
     classList: {
       add(name) { classes.add(name); },
       remove(name) { classes.delete(name); },
@@ -47,7 +63,11 @@ function getElement(selector) {
     querySelectorAll() { return []; },
     showModal() { this.open = true; },
     close() { this.open = false; },
-    pause() {},
+    pause() {
+      this.paused = true;
+      const callback = listeners.get(this.selector)?.get("pause");
+      if (callback) callback();
+    },
     load() {},
     removeAttribute() {},
     insertAdjacentHTML() {},
@@ -61,6 +81,7 @@ const window = {
   crypto: { randomUUID: () => "startup-smoke" },
   innerHeight: 800,
   scrollY: 0,
+  navigator: { userAgent: "iPhone", platform: "iPhone", maxTouchPoints: 5, standalone: false },
   setTimeout() { return 1; },
   clearTimeout() {},
   setInterval() { return 2; },
@@ -73,6 +94,8 @@ const document = {
   querySelector: getElement,
   querySelectorAll() { return []; },
   documentElement: { scrollHeight: 1200 },
+  pictureInPictureEnabled: true,
+  pictureInPictureElement: null,
   addEventListener() {},
   createElement(tag) { return { tagName: String(tag).toUpperCase(), className: "", textContent: "" }; }
 };
@@ -91,6 +114,8 @@ async function fetch(path) {
       series: { id: "7100000000000101", title: "Startup Smoke Series" },
       episodes: [{ id: "7100000000000201", number: 1, playable: true }]
     };
+  } else if (url.startsWith("/api/v1/play/")) {
+    payload = { quality: "1080P", available_qualities: [{ label: "1080P" }], src: "/api/v1/media/mock", protected: true };
   } else {
     payload = { items: [], cursor: "", has_more: false };
   }
@@ -174,6 +199,41 @@ episodeGridClick({
 });
 await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
+const video = getElement("#web-player");
+const playbackStatus = getElement("#playback-status");
+assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 1×", "Playback status must show the initial actual quality and speed");
+const speedChange = listeners.get("#player-speed")?.get("change");
+assert.equal(typeof speedChange, "function", "The speed selector must have a change handler");
+speedChange({ target: { value: "3" } });
+assert.equal(video.playbackRate, 3, "Selecting 3× must update the video playback rate");
+listeners.get("#web-player")?.get("ratechange")?.();
+assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 3×", "Playback status must update immediately when speed changes");
+const pipButton = getElement("#player-pip");
+assert.equal(pipButton.hidden, false, "A supported browser must expose an explicit PiP button");
+const pipClick = listeners.get("#player-pip")?.get("click");
+assert.equal(typeof pipClick, "function", "The player must provide an explicit PiP action");
+await pipClick();
+assert.equal(video.webkitPresentationMode, "picture-in-picture", "The PiP action must enter WebKit picture-in-picture mode");
+assert.equal(pipButton.textContent, "退出画中画", "The PiP action must reflect the active presentation mode");
+assert.equal(getElement("#pip-hold-speed").hidden, false, "The page-level PiP speed helper must appear while PiP is active");
+const pipHoldDown = listeners.get("#pip-hold-speed")?.get("pointerdown");
+const pipHoldUp = listeners.get("#pip-hold-speed")?.get("pointerup");
+assert.equal(typeof pipHoldDown, "function", "The PiP speed helper must be bound to hold acceleration");
+pipHoldDown({ type: "pointerdown", pointerId: 1, button: 0 });
+assert.equal(video.playbackRate, 2, "Holding the PiP helper must temporarily set 2×");
+assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 2×", "Status must reflect temporary 2× playback");
+pipHoldUp();
+assert.equal(video.playbackRate, 3, "Releasing the PiP helper must restore the selected 3× speed");
+assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 3×", "Status must reflect the restored selected speed");
+await pipClick();
+assert.equal(video.webkitPresentationMode, "inline", "The PiP action must exit back to inline playback");
+window.navigator.standalone = true;
+video._pipSupported = false;
+listeners.get("#web-player")?.get("loadedmetadata")?.();
+assert.equal(pipButton.hidden, false, "An iOS standalone app must explain unavailable PiP instead of silently omitting the control");
+assert.equal(pipButton.textContent, "画中画不可用", "An unsupported iOS standalone app must label the PiP limitation");
+await pipClick();
+assert.match(getElement("#toast").textContent, /Safari 标签页/, "Unavailable iOS standalone PiP must explain the Safari workaround");
 const holdDown = listeners.get("#player-hold-speed")?.get("pointerdown");
 const holdUp = listeners.get("#player-hold-speed")?.get("pointerup");
 assert.doesNotMatch(source, /id="player-hold-speed"/, "The player video toolbar should not add a visually intrusive hold-to-boost button");
@@ -204,4 +264,6 @@ assert.equal(getElement("#install-dialog").open, true, "The install action must 
 assert.match(manifestSource, /"display": "standalone"/, "Manifest must request standalone app display");
 assert.match(manifestSource, /192x192/, "Manifest must include a 192px icon");
 assert.match(manifestSource, /512x512/, "Manifest must include a 512px icon");
-console.log("UI smoke test passed: startup, settings, details, web fullscreen, swipe/hold separation, catalogue image retry/fallback, installation guide, and PWA manifest.");
+assert.match(source, /id="player-pip"/, "The player template must include a dedicated PiP action");
+assert.match(source, /addEventListener\("ratechange"/, "Playback status must react to actual playback-rate changes");
+console.log("UI smoke test passed: startup, settings, details, web fullscreen, PiP controls, live playback speed status, swipe/hold separation, catalogue image retry/fallback, installation guide, and PWA manifest.");

@@ -66,11 +66,11 @@ jobs:
           overwrite_files: true
           body: |
             ## 本次更新
-            - 恢复播放器工具栏独立“画中画”入口，按 WebKit / 标准 PiP API 的真实能力进入或退出系统小窗。
-            - iOS 主屏幕独立网页 App 若系统不支持 PiP，明确显示不可用并提示从 Safari 标签页打开；不伪装成能绕过 WebKit 限制。
-            - 修复 PiP 页面辅助“按住 2×”按钮没有绑定按下/松开事件的问题；原生 PiP 窗口内的控件仍由 iOS 系统管理。
-            - 播放状态实时同步真实倍速：切换 3×、长按临时 2×、松手恢复，以及暂停/恢复都会立即更新。
-            - 保留 v0.1.19 的搜索封面修复与主动浏览整批 8 路预取，以及 v0.1.18 的上下滑切集修复。
+            - 新增 iOS / Safari Media Session 锁屏媒体信息：显示当前短剧封面、短剧名称和集数。
+            - 锁屏支持播放、暂停、上一集、下一集及进度跳转，直接控制当前网页视频和分集播放流程。
+            - 播放状态和进度实时同步；切集更新锁屏信息，关闭播放器后清理旧媒体信息。
+            - 封面通过 N1 同源图片代理读取，不将上游签名 URL 或媒体密钥暴露给浏览器。
+            - 保留 v0.1.20 的独立 PiP 入口及 iOS standalone 能力提示。
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`
             - Linux x86_64（AMD64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-amd64`

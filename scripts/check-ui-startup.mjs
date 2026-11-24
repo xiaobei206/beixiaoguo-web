@@ -8,6 +8,17 @@ const manifestSource = fs.readFileSync(new URL("../internal/webui/manifest.webma
 const elements = new Map();
 const listeners = new Map();
 const requests = [];
+const mediaSession = {
+  metadata: null,
+  playbackState: "none",
+  handlers: new Map(),
+  positionState: null,
+  setActionHandler(action, handler) { this.handlers.set(action, handler); },
+  setPositionState(state) { this.positionState = state || null; }
+};
+class MockMediaMetadata {
+  constructor(init) { Object.assign(this, init); }
+}
 
 function getElement(selector) {
   if (elements.has(selector)) return elements.get(selector);
@@ -22,6 +33,9 @@ function getElement(selector) {
     open: false,
     paused: true,
     playbackRate: 1,
+    currentTime: 0,
+    duration: 0,
+    ended: false,
     webkitPresentationMode: "inline",
     _pipSupported: true,
     textContent: "",
@@ -81,7 +95,8 @@ const window = {
   crypto: { randomUUID: () => "startup-smoke" },
   innerHeight: 800,
   scrollY: 0,
-  navigator: { userAgent: "iPhone", platform: "iPhone", maxTouchPoints: 5, standalone: false },
+  navigator: { userAgent: "iPhone", platform: "iPhone", maxTouchPoints: 5, standalone: false, mediaSession },
+  MediaMetadata: MockMediaMetadata,
   setTimeout() { return 1; },
   clearTimeout() {},
   setInterval() { return 2; },
@@ -111,8 +126,11 @@ async function fetch(path) {
     payload = { settings: {}, cache: {}, preheat: {} };
   } else if (/^\/api\/v1\/series\/[^/]+\/detail$/.test(url)) {
     payload = {
-      series: { id: "7100000000000101", title: "Startup Smoke Series" },
-      episodes: [{ id: "7100000000000201", number: 1, playable: true }]
+      series: { id: "7100000000000101", title: "Startup Smoke Series", cover_url: "/api/v1/images/0123456789abcdef0123456789abcdef" },
+      episodes: [
+        { id: "7100000000000201", number: 1, playable: true },
+        { id: "7100000000000202", number: 2, playable: true }
+      ]
     };
   } else if (url.startsWith("/api/v1/play/")) {
     payload = { quality: "1080P", available_qualities: [{ label: "1080P" }], src: "/api/v1/media/mock", protected: true };
@@ -202,6 +220,29 @@ await new Promise((resolve) => setImmediate(resolve));
 const video = getElement("#web-player");
 const playbackStatus = getElement("#playback-status");
 assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 1×", "Playback status must show the initial actual quality and speed");
+assert.equal(mediaSession.playbackState, "playing", "The Media Session must follow active video playback");
+assert.equal(mediaSession.metadata?.title, "Startup Smoke Series", "Lock-screen metadata must show the series title");
+assert.equal(mediaSession.metadata?.artist, "第 1 集 · 贝小果", "Lock-screen metadata must identify the current episode");
+assert.equal(mediaSession.metadata?.album, "贝小果短剧", "Lock-screen metadata must identify the app");
+assert.equal(mediaSession.metadata?.artwork?.[0]?.src, "/api/v1/images/0123456789abcdef0123456789abcdef", "Lock-screen artwork must use the N1-proxied series cover");
+assert.ok(mediaSession.handlers.has("play") && mediaSession.handlers.has("pause"), "Lock-screen play and pause actions must be registered");
+assert.ok(mediaSession.handlers.has("previoustrack") && mediaSession.handlers.has("nexttrack"), "Lock-screen previous/next actions must be registered");
+assert.ok(mediaSession.handlers.has("seekto") && mediaSession.handlers.has("seekbackward") && mediaSession.handlers.has("seekforward"), "Lock-screen seek actions must be registered");
+video.duration = 120;
+video.currentTime = 12;
+listeners.get("#web-player")?.get("timeupdate")?.();
+assert.equal(mediaSession.positionState?.duration, 120, "Media Session must publish the video duration");
+assert.equal(mediaSession.positionState?.position, 12, "Media Session must publish the current video position");
+mediaSession.handlers.get("seekto")({seekTime:32});
+assert.equal(video.currentTime, 32, "The lock-screen seek action must control the video position");
+mediaSession.handlers.get("seekforward")({seekOffset:5});
+assert.equal(video.currentTime, 37, "The lock-screen seek-forward action must move the video");
+mediaSession.handlers.get("seekbackward")({seekOffset:5});
+assert.equal(video.currentTime, 32, "The lock-screen seek-backward action must move the video");
+mediaSession.handlers.get("pause")();
+assert.equal(mediaSession.playbackState, "paused", "Lock-screen pause must update Media Session state");
+await mediaSession.handlers.get("play")();
+assert.equal(mediaSession.playbackState, "playing", "Lock-screen play must resume the same video");
 const speedChange = listeners.get("#player-speed")?.get("change");
 assert.equal(typeof speedChange, "function", "The speed selector must have a change handler");
 speedChange({ target: { value: "3" } });
@@ -227,6 +268,14 @@ assert.equal(video.playbackRate, 3, "Releasing the PiP helper must restore the s
 assert.equal(playbackStatus.textContent, "正在播放 · 1080P · 3×", "Status must reflect the restored selected speed");
 await pipClick();
 assert.equal(video.webkitPresentationMode, "inline", "The PiP action must exit back to inline playback");
+mediaSession.handlers.get("nexttrack")();
+await new Promise((resolve) => setImmediate(resolve));
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(mediaSession.metadata?.artist, "第 2 集 · 贝小果", "Lock-screen metadata must update when advancing to the next episode");
+mediaSession.handlers.get("previoustrack")();
+await new Promise((resolve) => setImmediate(resolve));
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(mediaSession.metadata?.artist, "第 1 集 · 贝小果", "Lock-screen metadata must update when returning to the previous episode");
 window.navigator.standalone = true;
 video._pipSupported = false;
 listeners.get("#web-player")?.get("loadedmetadata")?.();
@@ -266,4 +315,10 @@ assert.match(manifestSource, /192x192/, "Manifest must include a 192px icon");
 assert.match(manifestSource, /512x512/, "Manifest must include a 512px icon");
 assert.match(source, /id="player-pip"/, "The player template must include a dedicated PiP action");
 assert.match(source, /addEventListener\("ratechange"/, "Playback status must react to actual playback-rate changes");
-console.log("UI smoke test passed: startup, settings, details, web fullscreen, PiP controls, live playback speed status, swipe/hold separation, catalogue image retry/fallback, installation guide, and PWA manifest.");
+listeners.get("#detail-dialog")?.get("close")?.();
+assert.equal(mediaSession.metadata, null, "Closing the player must clear stale lock-screen metadata");
+assert.equal(mediaSession.playbackState, "none", "Closing the player must release the Media Session");
+assert.equal(mediaSession.positionState, null, "Closing the player must clear stale lock-screen position state");
+assert.match(source, /navigator\.mediaSession|nav\.mediaSession/, "The player must integrate with the browser Media Session API");
+assert.match(source, /new window\.MediaMetadata/, "The player must publish native lock-screen metadata");
+console.log("UI smoke test passed: startup, settings, details, web fullscreen, PiP controls, Media Session metadata/actions/position, live playback speed status, swipe/hold separation, catalogue image retry/fallback, installation guide, and PWA manifest.");

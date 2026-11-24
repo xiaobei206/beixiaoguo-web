@@ -59,7 +59,6 @@ func newDiskCache(dir string, maxBytes int64) (*diskCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
 	for _, file := range files {
 		name := file.Name()
 		if strings.HasPrefix(name, ".image-") && strings.HasSuffix(name, ".tmp") {

@@ -81,13 +81,25 @@
   async function request(path, options) {
     options = options || {};
     const headers = Object.assign({"Accept":"application/json"}, options.headers || {});
-    const response = await fetch(path, Object.assign({}, options, {headers}));
-    const payload = await response.json();
-    if (!response.ok) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (options.signal && options.signal.aborted) {
+        const aborted = new Error("request aborted");
+        aborted.name = "AbortError";
+        throw aborted;
+      }
+      const response = await fetch(path, Object.assign({}, options, {headers}));
+      const payload = await response.json();
+      if (response.ok) return payload;
+
       const err = payload && payload.error ? payload.error : {};
+      if (err.code === "REQUEST_QUEUE_FULL" && attempt === 0) {
+        const retryAfter = Number(response.headers.get("Retry-After")) || 2;
+        await new Promise((resolve) => window.setTimeout(resolve, Math.min(5, retryAfter) * 1000));
+        continue;
+      }
       throw new Error(err.message || ("HTTP " + response.status));
     }
-    return payload;
+    throw new Error("片库请求繁忙，请稍后重试");
   }
 
   function normalize(item) {

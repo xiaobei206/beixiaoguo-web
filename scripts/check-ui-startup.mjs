@@ -8,6 +8,7 @@ const indexSource = fs.readFileSync(new URL("../internal/webui/index.html", impo
 const manifestSource = fs.readFileSync(new URL("../internal/webui/manifest.webmanifest", import.meta.url), "utf8");
 const elements = new Map();
 const listeners = new Map();
+const documentListeners = new Map();
 const requests = [];
 const mediaSession = {
   metadata: null,
@@ -116,7 +117,14 @@ const document = {
   documentElement: { scrollHeight: 1200 },
   pictureInPictureEnabled: true,
   pictureInPictureElement: null,
-  addEventListener() {},
+  fullscreenElement: null,
+  webkitFullscreenElement: null,
+  exitFullscreen: null,
+  webkitExitFullscreen: null,
+  addEventListener(type, handler) {
+    if (!documentListeners.has(type)) documentListeners.set(type, []);
+    documentListeners.get(type).push(handler);
+  },
   createElement(tag) {
     if (String(tag).toLowerCase() === "canvas") {
       return {
@@ -209,6 +217,65 @@ assert.equal(detailRequests.length, 1, "Opening a series must make a single comb
 assert.ok(detailRequests[0].endsWith("/detail"), "Series detail must use the combined endpoint");
 assert.ok(!detailRequests.some((url) => url.endsWith("/episodes")), "Series detail must not duplicate the upstream request for episodes");
 
+const systemFullscreenClick = listeners.get("#player-fullscreen")?.get("click");
+assert.equal(typeof systemFullscreenClick, "function", "The player must expose a system fullscreen control");
+const fullscreenPanel = getElement("#playback-panel");
+const fullscreenVideo = getElement("#web-player");
+function dispatchDocumentEvent(type) {
+  for (const handler of documentListeners.get(type) || []) handler();
+}
+fullscreenVideo.webkitSupportsFullscreen = true;
+fullscreenVideo.webkitDisplayingFullscreen = false;
+fullscreenVideo.webkitEnterFullscreen = function () {
+  this.webkitDisplayingFullscreen = true;
+  const handler = listeners.get("#web-player")?.get("webkitbeginfullscreen");
+  if (handler) handler();
+};
+fullscreenVideo.webkitExitFullscreen = function () {
+  this.webkitDisplayingFullscreen = false;
+  const handler = listeners.get("#web-player")?.get("webkitendfullscreen");
+  if (handler) handler();
+};
+
+// iPhone Safari supports native video fullscreen, not arbitrary element fullscreen.
+window.navigator.userAgent = "iPhone";
+await systemFullscreenClick();
+assert.equal(fullscreenVideo.webkitDisplayingFullscreen, true, "iPhone must enter native video fullscreen");
+assert.equal(getElement("#player-fullscreen").textContent, "退出系统全屏", "Native iPhone fullscreen must update the system fullscreen button");
+await systemFullscreenClick();
+assert.equal(fullscreenVideo.webkitDisplayingFullscreen, false, "The system fullscreen button must exit native iPhone fullscreen");
+assert.equal(getElement("#player-fullscreen").textContent, "系统全屏", "Exiting native iPhone fullscreen must restore the button label");
+
+// Desktop browsers use the standard Fullscreen API on the player panel.
+window.navigator.userAgent = "Desktop Chrome";
+fullscreenPanel.requestFullscreen = async function () {
+  document.fullscreenElement = this;
+  dispatchDocumentEvent("fullscreenchange");
+};
+document.exitFullscreen = async function () {
+  document.fullscreenElement = null;
+  dispatchDocumentEvent("fullscreenchange");
+};
+await systemFullscreenClick();
+assert.equal(document.fullscreenElement, fullscreenPanel, "Desktop must request system fullscreen for the player panel");
+assert.equal(getElement("#player-fullscreen").textContent, "退出系统全屏", "Desktop fullscreenchange must update the button");
+await systemFullscreenClick();
+assert.equal(document.fullscreenElement, null, "The desktop system fullscreen button must exit fullscreen");
+assert.equal(getElement("#player-fullscreen").textContent, "系统全屏", "Exiting desktop fullscreen must restore the button label");
+
+// If a browser rejects fullscreen on the panel, retry on the video element.
+fullscreenPanel.requestFullscreen = async function () { throw new Error("panel fullscreen denied"); };
+fullscreenVideo.requestFullscreen = async function () {
+  document.fullscreenElement = this;
+  dispatchDocumentEvent("fullscreenchange");
+};
+await systemFullscreenClick();
+assert.equal(document.fullscreenElement, fullscreenVideo, "The video element must be a fallback when panel fullscreen is rejected");
+await systemFullscreenClick();
+assert.equal(document.fullscreenElement, null, "The video fullscreen fallback must be exit-able");
+
+assert.doesNotMatch(source, /controlsList="nofullscreen"/, "Native video controls must retain their built-in fullscreen entry point");
+
 const webFullscreenClick = listeners.get("#player-web-fullscreen")?.get("click");
 assert.equal(typeof webFullscreenClick, "function", "The player must expose a separate web fullscreen control");
 webFullscreenClick();
@@ -243,13 +310,15 @@ webFullscreenClick();
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Web fullscreen can be exited with its button");
 assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must expand the detail dialog to viewport size");
 assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
+assert.match(cssSource, /#playback-panel:-webkit-full-screen/, "System fullscreen must also support the prefixed WebKit fullscreen pseudo-class");
+assert.match(cssSource, /#web-player:fullscreen/, "Video-only system fullscreen fallback must fill the viewport");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-toolbar\s*\{[\s\S]*?position:\s*absolute;/, "Fullscreen toolbar must overlay the video instead of reserving vertical space");
 assert.match(cssSource, /#playback-panel\.web-fullscreen\.player-controls-visible \.player-toolbar/, "Fullscreen toolbar must appear only while the visible-controls state is active");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.playback-status\s*\{\s*display:\s*none;/, "Fullscreen playback status must not reserve additional video height");
 assert.match(cssSource, /\.player-nav\[hidden\]\s*\{\s*display:\s*none\s*!important;/, "Hidden episode navigation must not render even if styles conflict");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav[^\{]*\{\s*display:\s*none\s*!important;/, "Web fullscreen must force-hide previous/next episode buttons");
-assert.match(indexSource, /app\.css\?v=0\.1\.25/, "The page template must cache-bust the updated stylesheet");
-assert.match(indexSource, /app\.js\?v=0\.1.25/, "The page template must cache-bust the updated script");
+assert.match(indexSource, /app\.css\?v=0\.1\.26/, "The page template must cache-bust the updated stylesheet");
+assert.match(indexSource, /app\.js\?v=0\.1.26/, "The page template must cache-bust the updated script");
 const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");
 assert.equal(typeof episodeGridClick, "function", "The series detail must expose episode selection");
 episodeGridClick({

@@ -1,3 +1,14 @@
+## 0.1.26 — 2026-11-25
+
+### 修复系统全屏入口
+- 恢复 HTML5 video 原生控件的系统全屏入口，移除全局 `controlsList="nofullscreen"` 禁用项；网页全屏状态下仍保留隐藏原生小按钮的规则，避免与自定义浮层重复。
+- 自定义系统全屏按钮现在兼容标准 Fullscreen API 与 WebKit 前缀；当浏览器拒绝播放器容器全屏时，回退到视频元素自身的 Fullscreen API。
+- iPhone Safari/WebKit 使用视频专属 `webkitEnterFullscreen()` / `webkitExitFullscreen()`，监听 `webkitbeginfullscreen` 和 `webkitendfullscreen`，同步按钮文本、按下状态与关闭按钮行为。
+- 系统全屏 CSS 补充 WebKit 前缀伪类；全屏状态支持视频元素直接全屏的布局。
+- UI 冒烟测试覆盖 iPhone 原生视频全屏、桌面容器全屏、视频元素回退和退出状态；CI 通过后仍需真实桌面浏览器与 iPhone 实机验收。
+
+---
+
 ## 0.1.25 — 2026-11-25
 
 ### 网页全屏自动隐藏播放器工具栏

@@ -1040,6 +1040,111 @@
     }, delay == null ? 3500 : delay);
   }
 
+  function getPlayerFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement ||
+      document.mozFullScreenElement || document.msFullscreenElement || null;
+  }
+
+  function isNativeVideoFullscreen(video) {
+    return !!(video && (video.webkitDisplayingFullscreen || video.webkitIsFullScreen));
+  }
+
+  function isPlayerSystemFullscreen(panel, video) {
+    const element = getPlayerFullscreenElement();
+    return element === panel || element === video || isNativeVideoFullscreen(video);
+  }
+
+  function syncSystemFullscreenButton() {
+    const panel = $("#playback-panel");
+    const video = $("#web-player");
+    const button = $("#player-fullscreen");
+    const closeButton = $("#player-close");
+    if (!panel || !button) return;
+    const active = isPlayerSystemFullscreen(panel, video);
+    if (!getPlayerFullscreenElement() && !isNativeVideoFullscreen(video)) panel.classList.remove("manual-fullscreen");
+    button.textContent = active ? "退出系统全屏" : "系统全屏";
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    if (closeButton) closeButton.textContent = active || panel.classList.contains("web-fullscreen") ? "退出全屏" : "收起";
+  }
+
+  async function exitPlayerSystemFullscreen(video) {
+    if (isNativeVideoFullscreen(video) && typeof video.webkitExitFullscreen === "function") {
+      video.webkitExitFullscreen();
+      return;
+    }
+    const exit = document.exitFullscreen || document.webkitExitFullscreen ||
+      document.mozCancelFullScreen || document.msExitFullscreen;
+    if (typeof exit === "function") {
+      await exit.call(document);
+      return;
+    }
+    if (video && typeof video.webkitExitFullscreen === "function") {
+      video.webkitExitFullscreen();
+      return;
+    }
+    throw new Error("当前浏览器没有可用的系统全屏退出接口");
+  }
+
+  async function requestPlayerFullscreen(element) {
+    const request = element && (element.requestFullscreen || element.webkitRequestFullscreen ||
+      element.mozRequestFullScreen || element.msRequestFullscreen);
+    if (typeof request !== "function") throw new Error("Fullscreen API unavailable");
+    const result = request.call(element);
+    if (result && typeof result.then === "function") await result;
+  }
+
+  async function togglePlayerSystemFullscreen() {
+    const panel = $("#playback-panel");
+    const video = $("#web-player");
+    if (!panel || !video) return;
+    if (isPlayerSystemFullscreen(panel, video)) {
+      try {
+        await exitPlayerSystemFullscreen(video);
+      } catch (_) {
+        showToast("退出系统全屏失败，请使用浏览器的退出手势或 Esc");
+      }
+      syncSystemFullscreenButton();
+      return;
+    }
+
+    const userAgent = window.navigator && window.navigator.userAgent || "";
+    if (/iPhone|iPod/i.test(userAgent) && typeof video.webkitEnterFullscreen === "function") {
+      try {
+        if (video.webkitSupportsFullscreen === false) throw new Error("视频暂不支持原生全屏");
+        video.webkitEnterFullscreen();
+        syncSystemFullscreenButton();
+      } catch (_) {
+        showToast("当前视频暂不支持系统全屏，请使用网页全屏");
+      }
+      return;
+    }
+
+    try {
+      await requestPlayerFullscreen(panel);
+      syncSystemFullscreenButton();
+      return;
+    } catch (_) {}
+
+    // Some browsers reject fullscreen on an element inside a modal dialog.
+    // Fall back to the video element so the browser can still provide native fullscreen.
+    try {
+      await requestPlayerFullscreen(video);
+      syncSystemFullscreenButton();
+      return;
+    } catch (_) {}
+
+    // Older iOS/WebKit builds expose only the video-specific fullscreen API.
+    if (typeof video.webkitEnterFullscreen === "function") {
+      try {
+        if (video.webkitSupportsFullscreen === false) throw new Error("视频暂不支持原生全屏");
+        video.webkitEnterFullscreen();
+        syncSystemFullscreenButton();
+        return;
+      } catch (_) {}
+    }
+    showToast("当前浏览器无法进入系统全屏，请使用网页全屏");
+  }
+
   function setPlayerWebFullscreen(enabled) {
     const panel = $("#playback-panel");
     const dialog = $("#detail-dialog");
@@ -1189,7 +1294,7 @@
         '<button id="player-web-fullscreen" class="player-action" type="button" aria-pressed="false">网页全屏</button>' +
         '<button id="player-fullscreen" class="player-action" type="button">系统全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
-        '<div id="player-stage" class="player-stage"><video id="web-player" controls controlsList="nofullscreen" playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
+        '<div id="player-stage" class="player-stage"><video id="web-player" controls playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
         '' +
         '</div>' +
         '<div class="player-nav"><button id="player-prev" type="button">上一集</button><button id="player-next" type="button">下一集</button></div>' +
@@ -1212,8 +1317,14 @@
         const index = episodes.findIndex((ep) => String(ep.id) === button.dataset.episodeId);
         if (index >= 0) playEpisodeAt(index);
       });
-      $("#player-close").addEventListener("click", () => {
+      $("#player-close").addEventListener("click", async () => {
         const panel = $("#playback-panel");
+        const video = $("#web-player");
+        if (isPlayerSystemFullscreen(panel, video)) {
+          await exitPlayerSystemFullscreen(video).catch(() => {});
+          syncSystemFullscreenButton();
+          return;
+        }
         if (panel.classList.contains("web-fullscreen")) {
           setPlayerWebFullscreen(false);
           return;
@@ -1347,24 +1458,11 @@
         touchBoosted = false;
       }, {passive:true});
       stage.addEventListener("contextmenu", (event) => event.preventDefault());
-      $("#player-fullscreen").addEventListener("click", async () => {
-        const panel = $("#playback-panel");
-        if (document.fullscreenElement === panel) {
-          try {
-            if (document.exitFullscreen) await document.exitFullscreen();
-          } catch (_) {}
-          return;
-        }
-        if (typeof panel.requestFullscreen !== "function") {
-          showToast("当前浏览器不支持系统全屏，请使用网页全屏");
-          return;
-        }
-        try {
-          await panel.requestFullscreen();
-        } catch (_) {
-          showToast("系统全屏不可用，请使用网页全屏");
-        }
-      });
+      const fullscreenVideo = $("#web-player");
+      fullscreenVideo.addEventListener("webkitbeginfullscreen", syncSystemFullscreenButton);
+      fullscreenVideo.addEventListener("webkitendfullscreen", syncSystemFullscreenButton);
+      $("#player-fullscreen").addEventListener("click", togglePlayerSystemFullscreen);
+      syncSystemFullscreenButton();
     } catch (error) {
       if (detailRequestID !== state.detailRequestId) return;
       body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") +
@@ -1628,11 +1726,8 @@
     event.preventDefault();
     setPlayerWebFullscreen(false);
   });
-  document.addEventListener("fullscreenchange", () => {
-    const button = $("#player-fullscreen");
-    const panel = $("#playback-panel");
-    if (button) button.textContent = document.fullscreenElement === panel ? "退出系统全屏" : "系统全屏";
-  });
+  document.addEventListener("fullscreenchange", syncSystemFullscreenButton);
+  document.addEventListener("webkitfullscreenchange", syncSystemFullscreenButton);
   $("#detail-dialog").addEventListener("click", (event) => {
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
   });

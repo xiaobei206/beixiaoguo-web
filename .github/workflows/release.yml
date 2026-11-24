@@ -37,6 +37,8 @@ jobs:
         run: go test ./...
       - name: Check browser JavaScript syntax
         run: node --check internal/webui/assets/app.js
+      - name: Smoke-test browser startup and settings
+        run: node scripts/check-ui-startup.mjs
       - name: Check shell scripts
         run: |
           sh -n scripts/install-n1.sh
@@ -64,6 +66,7 @@ jobs:
           overwrite_files: true
           body: |
             ## 本次更新
+            - 修复前端初始化中断：设置按钮恢复可用，首页首次打开自动加载推荐列表；新增浏览器启动冒烟测试。
             - 新增右上角“缓存与智能预热”设置页，参数保存到 /opt/beixiaoguo/settings.json，保存后立即生效，无需重新编译或重启。
             - 图片 RAM 默认 224 MiB，闪存默认 4 GiB；RAM 按 7 天闲置淘汰，闪存按 90 天闲置保留并 LRU 淘汰，至少保留 1 GiB 系统剩余空间。
             - 移除图片 RAM 12 小时强制过期；RAM 命中不再反复读取闪存，闪存命中不重复写文件。

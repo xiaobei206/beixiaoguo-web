@@ -167,11 +167,12 @@ func (c *diskCache) store(key, contentType string, body []byte) error {
 	}
 
 	var filesystem syscall.Statfs_t
-	if err := syscall.Statfs(c.dir, &filesystem); err == nil {
-		available := int64(filesystem.Bavail) * int64(filesystem.Bsize)
-		if available-int64(data.Len()) < minDiskFreeBytes {
-			return fmt.Errorf("image disk cache is preserving the final 128 MiB of free space")
-		}
+	if err := syscall.Statfs(c.dir, &filesystem); err != nil {
+		return fmt.Errorf("cannot verify image cache free space: %w", err)
+	}
+	available := int64(filesystem.Bavail) * int64(filesystem.Bsize)
+	if available-int64(data.Len()) < minDiskFreeBytes {
+		return fmt.Errorf("image disk cache is preserving the final 128 MiB of free space")
 	}
 
 	temp, err := os.CreateTemp(c.dir, ".image-*.tmp")

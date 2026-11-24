@@ -884,14 +884,14 @@
         '<option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>' +
         '<option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>' +
         '<option value="2.5">2.5×</option><option value="3">3×</option></select></label>' +
-        '<button id="player-hold-speed" class="player-action hold-speed-button" type="button" aria-label="按住临时 2 倍速，松开恢复已设置倍速">按住 2×</button>' +
+        '' +
         '<button id="player-cast" class="player-action" type="button" title="投屏到 hongguoTV">投屏</button>' +
         '<button id="player-web-fullscreen" class="player-action" type="button" aria-pressed="false">网页全屏</button>' +
         '<button id="player-fullscreen" class="player-action" type="button">系统全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
         '<div id="player-stage" class="player-stage"><video id="web-player" controls controlsList="nofullscreen" playsinline webkit-playsinline disableRemotePlayback x-webkit-airplay="deny" preload="metadata"></video>' +
-        '<div id="player-speed-indicator" class="player-speed-indicator" hidden>临时 2× 倍速</div>' +
-        '<div class="swipe-hint">上滑下一集 · 下滑上一集；按住画面临时 2×</div></div>' +
+        '' +
+        '</div>' +
         '<div class="player-nav"><button id="player-prev" type="button">上一集</button><button id="player-next" type="button">下一集</button></div>' +
         '<div id="playback-status" class="playback-status" role="status">选择集数开始播放</div></section>' +
         '<h3 class="episode-heading">选集</h3><div class="episode-grid">' +
@@ -990,7 +990,7 @@
           endTemporaryBoost();
           return;
         }
-        if (touchMoved || Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;
+        if (Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;
         changeEpisode(dy < 0 ? 1 : -1);
       }, {passive:true});
       stage.addEventListener("touchcancel", () => {

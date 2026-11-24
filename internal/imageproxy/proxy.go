@@ -27,7 +27,7 @@ import (
 const (
 	maxImageBytes = 8 << 20
 	maxCacheBytes = 224 << 20
-	entryLifetime = 7 * 24 * time.Hour
+	entryLifetime = 45 * 24 * time.Hour
 	cacheLifetime = 12 * time.Hour
 
 	maxDiskCacheBytes      = int64(1 << 30)
@@ -319,14 +319,13 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 		p.mu.Unlock()
 		return body, contentType, etag, nil
 	}
-	hasStaleRAM := len(item.body) > 0
 	raw = item.sourceURL
 	p.mu.Unlock()
 
-	// After a process restart there is no RAM entry, so a persistent hit can
-	// be promoted immediately. An expired RAM entry instead triggers a refresh;
-	// ServeHTTP retains it as stale-if-error fallback while the refresh runs.
-	if !hasStaleRAM && p.disk != nil {
+	// RAM expires after 12 hours, but the persistent image is valid for up
+	// to 30 days. Consult disk before going back to the CDN, avoiding repeated
+	// network transfers and flash writes for unchanged covers.
+	if p.disk != nil {
 		if body, contentType, ok := p.disk.load(item.sourceKey); ok {
 			etag := p.cacheRAM(item, body, contentType)
 			return body, contentType, etag, nil

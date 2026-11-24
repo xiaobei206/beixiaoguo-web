@@ -61,6 +61,7 @@ jobs:
           generate_release_notes: true
           make_latest: true
           fail_on_unmatched_files: true
+          overwrite_files: true
           body: |
             ## 本次更新
             - 图片缓存升级为 224 MiB RAM 热缓存 + 最多 1 GiB 持久磁盘缓存，30 天 LRU 淘汰，服务重启后可复用。

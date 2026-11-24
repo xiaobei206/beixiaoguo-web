@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -546,6 +547,35 @@ func (s *Service) openRange(ctx context.Context, session *playbackSession, start
 			resp.Body.Close()
 			lastErr = fmt.Errorf("upstream did not honor the requested byte range")
 			continue
+		}
+
+		expectedLength := end - start + 1
+		if resp.ContentLength >= 0 && resp.ContentLength != expectedLength {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("upstream range content length mismatch: got=%d want=%d", resp.ContentLength, expectedLength)
+			continue
+		}
+
+		// Do not commit a 200/206 response to the browser until the CDN has
+		// supplied a real first chunk. Some broken edges return valid-looking
+		// Content-Range headers with an empty (or truncated) 206 body.
+		probeLength := min(expectedLength, probeSize)
+		prefix := make([]byte, int(probeLength))
+		n, readErr := io.ReadFull(resp.Body, prefix)
+		if readErr != nil {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("upstream range body too short: got=%d want_at_least=%d", n, probeLength)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			continue
+		}
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body),
+			Closer: resp.Body,
 		}
 		return resp, nil
 	}

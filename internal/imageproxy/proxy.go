@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,19 +26,26 @@ import (
 
 const (
 	maxImageBytes = 8 << 20
-	maxCacheBytes = 96 << 20
+	maxCacheBytes = 224 << 20
 	entryLifetime = 7 * 24 * time.Hour
 	cacheLifetime = 12 * time.Hour
+
+	maxDiskCacheBytes      = int64(1 << 30)
+	imageFetchConcurrency  = 8
+	imageFetchQueueCapacity = 64
 )
 
 type Proxy struct {
-	client *http.Client
-	logger *log.Logger
-	validate func(*url.URL) error
-	mu sync.Mutex
-	byToken map[string]*entry
-	bySource map[string]string
-	cacheBytes int64
+	client      *http.Client
+	logger      *log.Logger
+	validate    func(*url.URL) error
+	disk        *diskCache
+	fetchSlots  chan struct{}
+	fetchQueue  chan struct{}
+	mu          sync.Mutex
+	byToken     map[string]*entry
+	bySource    map[string]string
+	cacheBytes  int64
 }
 
 type entry struct {
@@ -53,34 +62,57 @@ type entry struct {
 }
 
 func New(loggers ...*log.Logger) *Proxy {
-	logger:=log.Default()
-	if len(loggers)>0 && loggers[0]!=nil {logger=loggers[0]}
-	transport:=&http.Transport{
-		Proxy:nil,
-		MaxIdleConns:12,
-		MaxIdleConnsPerHost:3,
-		MaxConnsPerHost:4,
-		IdleConnTimeout:45*time.Second,
-		TLSHandshakeTimeout:8*time.Second,
-		ResponseHeaderTimeout:12*time.Second,
-		TLSClientConfig:&tls.Config{MinVersion:tls.VersionTLS12},
-		DialContext:safeDialContext(&net.Dialer{Timeout:8*time.Second,KeepAlive:30*time.Second}),
+	logger := log.Default()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
 	}
-	p:=&Proxy{
-		logger:logger,
-		validate:validateURL,
-		byToken:make(map[string]*entry),
-		bySource:make(map[string]string),
+
+	diskDir := strings.TrimSpace(os.Getenv("BEIXIAOGUO_IMAGE_CACHE_DIR"))
+	disk, diskErr := newDiskCache(diskDir, maxDiskCacheBytes)
+	if diskErr != nil {
+		logger.Printf("image disk cache disabled error_type=%T", diskErr)
+		disk = nil
+	} else if disk != nil {
+		diskBytes, diskEntries := disk.stats()
+		logger.Printf("image disk cache ready bytes=%d entries=%d max_bytes=%d", diskBytes, diskEntries, maxDiskCacheBytes)
 	}
-	p.client=&http.Client{
-		Transport:transport,
-		Timeout:25*time.Second,
-		CheckRedirect:func(req *http.Request,via []*http.Request)error {
-			if len(via)>=5 {return fmt.Errorf("too many image CDN redirects")}
-			if len(via)>0 && via[len(via)-1].URL.Scheme=="https" && req.URL.Scheme!="https" {
+
+	transport := &http.Transport{
+		Proxy:                 nil,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   8,
+		MaxConnsPerHost:       8,
+		IdleConnTimeout:       45 * time.Second,
+		TLSHandshakeTimeout:   8 * time.Second,
+		ResponseHeaderTimeout: 12 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		DialContext: safeDialContext(&net.Dialer{
+			Timeout:   8 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}),
+	}
+	p := &Proxy{
+		logger:     logger,
+		validate:   validateURL,
+		disk:       disk,
+		fetchSlots: make(chan struct{}, imageFetchConcurrency),
+		fetchQueue: make(chan struct{}, imageFetchQueueCapacity),
+		byToken:    make(map[string]*entry),
+		bySource:  make(map[string]string),
+	}
+	p.client = &http.Client{
+		Transport: transport,
+		Timeout:   25 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many image CDN redirects")
+			}
+			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
 				return fmt.Errorf("image CDN redirect attempted HTTPS downgrade")
 			}
-			if err:=p.validate(req.URL);err!=nil {return fmt.Errorf("unsafe image CDN redirect: %w",err)}
+			if err := p.validate(req.URL); err != nil {
+				return fmt.Errorf("unsafe image CDN redirect: %w", err)
+			}
 			return nil
 		},
 	}
@@ -202,19 +234,33 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 	p.mu.Unlock()
 
 	if !fresh {
-		var err error
-		body,contentType,etag,err=p.fetch(r.Context(),item,source)
-		if err!=nil {
-			host:=""
-			if u,parseErr:=url.Parse(source);parseErr==nil {host=u.Hostname()}
-			p.logger.Printf("image proxy failed source_host=%q error=%q",host,err.Error())
-			http.Error(w,"cover image temporarily unavailable",http.StatusBadGateway)
-			return
+		staleBody, staleType, staleETag := body, contentType, etag
+		fetchedBody, fetchedType, fetchedETag, err := p.fetch(r.Context(), item, source)
+		if err != nil {
+			host := ""
+			if u, parseErr := url.Parse(source); parseErr == nil {
+				host = u.Hostname()
+			}
+			if len(staleBody) > 0 {
+				p.logger.Printf("image proxy serving stale cache source_host=%q reason=%q", host, err.Error())
+				body, contentType, etag = staleBody, staleType, staleETag
+			} else {
+				status := http.StatusBadGateway
+				if errors.Is(err, errImageQueueFull) {
+					status = http.StatusServiceUnavailable
+					w.Header().Set("Retry-After", "2")
+				}
+				p.logger.Printf("image proxy failed source_host=%q error=%q", host, err.Error())
+				http.Error(w, "cover image temporarily unavailable", status)
+				return
+			}
+		} else {
+			body, contentType, etag = fetchedBody, fetchedType, fetchedETag
 		}
 	}
 
 	w.Header().Set("Content-Type",contentType)
-	w.Header().Set("Cache-Control","public, max-age=43200, stale-while-revalidate=86400")
+	w.Header().Set("Cache-Control", "public, max-age=604800, stale-while-revalidate=2592000, stale-if-error=2592000")
 	w.Header().Set("ETag",etag)
 	w.Header().Set("X-Content-Type-Options","nosniff")
 	w.Header().Set("Vary","Accept")
@@ -261,6 +307,8 @@ func officialJPEGVariant(raw string) (string, bool) {
 	return u.String(), true
 }
 
+var errImageQueueFull = errors.New("image proxy request queue is full")
+
 func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, string, string, error) {
 	item.fetchMu.Lock()
 	defer item.fetchMu.Unlock()
@@ -273,6 +321,15 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 	}
 	raw = item.sourceURL
 	p.mu.Unlock()
+
+	// Persistent image hits are promoted into the RAM cache so subsequent
+	// requests are served without filesystem reads.
+	if p.disk != nil {
+		if body, contentType, ok := p.disk.load(item.sourceKey); ok {
+			etag := p.cacheRAM(item, body, contentType)
+			return body, contentType, etag, nil
+		}
+	}
 
 	sourceURL, err := url.Parse(raw)
 	if err != nil || p.validate(sourceURL) != nil {
@@ -287,6 +344,9 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 		if ctx.Err() != nil {
 			return nil, "", "", ctx.Err()
 		}
+		if errors.Is(variantErr, errImageQueueFull) {
+			return nil, "", "", variantErr
+		}
 		p.logger.Printf("image proxy JPEG variant failed source_host=%q error=%q; falling back to original",
 			sourceURL.Hostname(), variantErr.Error())
 	}
@@ -298,6 +358,22 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 	return p.cacheFetched(item, body, contentType)
 }
 
+func (p *Proxy) acquireFetchSlot(ctx context.Context) (func(), error) {
+	select {
+	case p.fetchQueue <- struct{}{}:
+	default:
+		return nil, errImageQueueFull
+	}
+	select {
+	case p.fetchSlots <- struct{}{}:
+		<-p.fetchQueue
+		return func() { <-p.fetchSlots }, nil
+	case <-ctx.Done():
+		<-p.fetchQueue
+		return nil, ctx.Err()
+	}
+}
+
 func (p *Proxy) fetchSource(ctx context.Context, sourceRaw, requestRaw string, requireJPEG bool) ([]byte, string, error) {
 	sourceURL, err := url.Parse(sourceRaw)
 	if err != nil {
@@ -307,12 +383,18 @@ func (p *Proxy) fetchSource(ctx context.Context, sourceRaw, requestRaw string, r
 	if err != nil || p.validate(requestURL) != nil {
 		return nil, "", fmt.Errorf("invalid cover request URL")
 	}
+	release, err := p.acquireFetchSlot(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestRaw, nil)
 	if err != nil {
 		return nil, "", err
 	}
 	req.Header.Set("Accept", "image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
-	req.Header.Set("User-Agent", "Beixiaoguo/0.1.4 image-proxy")
+	req.Header.Set("User-Agent", "Beixiaoguo/0.1.12 image-proxy")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -358,9 +440,9 @@ func hasJPEGSignature(body []byte) bool {
 	return len(body) >= 3 && body[0] == 0xff && body[1] == 0xd8 && body[2] == 0xff
 }
 
-func (p *Proxy) cacheFetched(item *entry, body []byte, contentType string) ([]byte, string, string, error) {
+func (p *Proxy) cacheRAM(item *entry, body []byte, contentType string) string {
 	sum := sha256.Sum256(body)
-	etag := "\"" + hex.EncodeToString(sum[:]) + "\""
+	etag := """ + hex.EncodeToString(sum[:]) + """
 
 	p.mu.Lock()
 	delta := int64(len(body)) - int64(len(item.body))
@@ -368,10 +450,51 @@ func (p *Proxy) cacheFetched(item *entry, body []byte, contentType string) ([]by
 	item.contentType = contentType
 	item.etag = etag
 	item.cachedAt = time.Now()
+	item.lastUsed = time.Now()
 	p.cacheBytes += delta
 	p.evictLocked(item.token)
 	p.mu.Unlock()
+	return etag
+}
+
+func (p *Proxy) cacheFetched(item *entry, body []byte, contentType string) ([]byte, string, string, error) {
+	etag := p.cacheRAM(item, body, contentType)
+	if p.disk != nil {
+		if err := p.disk.store(item.sourceKey, contentType, body); err != nil {
+			p.logger.Printf("image disk cache write failed error_type=%T", err)
+		}
+	}
 	return body, contentType, etag, nil
+}
+
+type CacheStats struct {
+	RAMBytes           int64
+	RAMEntries         int
+	DiskBytes          int64
+	DiskEntries        int
+	FetchActive        int
+	FetchQueued        int
+	FetchQueueCapacity int
+}
+
+func (p *Proxy) Stats() CacheStats {
+	stats := CacheStats{
+		FetchActive:        len(p.fetchSlots),
+		FetchQueued:        len(p.fetchQueue),
+		FetchQueueCapacity: cap(p.fetchQueue),
+	}
+	p.mu.Lock()
+	stats.RAMBytes = p.cacheBytes
+	for _, item := range p.byToken {
+		if len(item.body) > 0 {
+			stats.RAMEntries++
+		}
+	}
+	p.mu.Unlock()
+	if p.disk != nil {
+		stats.DiskBytes, stats.DiskEntries = p.disk.stats()
+	}
+	return stats
 }
 
 func (p *Proxy) pruneLocked(now time.Time) {

@@ -4,6 +4,7 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../internal/webui/assets/app.js", import.meta.url), "utf8");
 const cssSource = fs.readFileSync(new URL("../internal/webui/assets/app.css", import.meta.url), "utf8");
+const indexSource = fs.readFileSync(new URL("../internal/webui/index.html", import.meta.url), "utf8");
 const manifestSource = fs.readFileSync(new URL("../internal/webui/manifest.webmanifest", import.meta.url), "utf8");
 const elements = new Map();
 const listeners = new Map();
@@ -231,7 +232,8 @@ assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must ex
 assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
 assert.match(cssSource, /\.player-nav\[hidden\]\s*\{\s*display:\s*none\s*!important;/, "Hidden episode navigation must not render even if styles conflict");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav[^\{]*\{\s*display:\s*none\s*!important;/, "Web fullscreen must force-hide previous/next episode buttons");
-assert.match(source, /app\.css\?v=0\.1\.24|app\.js\?v=0\.1\.24/, "The page template must cache-bust updated frontend assets");
+assert.match(indexSource, /app\.css\?v=0\.1\.24/, "The page template must cache-bust the updated stylesheet");
+assert.match(indexSource, /app\.js\?v=0\.1\.24/, "The page template must cache-bust the updated script");
 const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");
 assert.equal(typeof episodeGridClick, "function", "The series detail must expose episode selection");
 episodeGridClick({

@@ -826,7 +826,9 @@
       });
     } catch (error) {
       if (detailRequestID !== state.detailRequestId) return;
-      body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") + '</div>';
+      body.innerHTML = '<div class="empty-state">' + escapeHTML(error.message || "详情载入失败") +
+        '<div class="detail-retry-wrap"><button id="detail-retry" class="load-more" type="button">重试加载</button></div></div>';
+      $("#detail-retry").addEventListener("click", () => openDetail(id));
     }
   }
 

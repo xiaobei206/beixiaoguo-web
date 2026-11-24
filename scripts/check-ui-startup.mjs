@@ -73,7 +73,8 @@ const document = {
   querySelector: getElement,
   querySelectorAll() { return []; },
   documentElement: { scrollHeight: 1200 },
-  addEventListener() {}
+  addEventListener() {},
+  createElement(tag) { return { tagName: String(tag).toUpperCase(), className: "", textContent: "" }; }
 };
 const localStorage = {
   getItem() { return null; },
@@ -180,6 +181,21 @@ assert.match(source, /stage\.addEventListener\("touchstart"/, "The video stage m
 assert.match(source, /changeEpisode\(dy < 0 \? 1 : -1\)/, "Vertical swipes must change episodes");
 assert.doesNotMatch(source, /if \(touchMoved \|\| Math\.abs\(dy\) < 55/, "Movement that cancels long-press must not also cancel swipe-to-change-episode");
 assert.doesNotMatch(source, /上滑下一集|下滑上一集|临时 2× 倍速/, "The video should not show persistent gesture instructions or a temporary speed text overlay");
+assert.match(source, /function handleGridImageError/, "Catalogue images must have an automatic recovery handler");
+assert.match(source, /data-original-src=/, "Catalogue cards must keep the original image URL for retry");
+assert.match(source, /_bxg_retry=/, "A failed image must be retried with a fresh browser cache key");
+assert.match(source, /image\.replaceWith\(placeholder\)/, "A twice-failed image must show the standard placeholder instead of a broken-image icon");
+const imageErrorHandler = listeners.get("#series-grid")?.get("error");
+assert.equal(typeof imageErrorHandler, "function", "The catalogue grid must capture image load errors");
+let imageFallback = null;
+imageErrorHandler({
+  target: {
+    tagName: "IMG",
+    dataset: { retryCount: "1", originalSrc: "/api/v1/images/0123456789abcdef0123456789abcdef" },
+    replaceWith(value) { imageFallback = value; }
+  }
+});
+assert.equal(imageFallback?.className, "poster-placeholder", "A second image failure must replace the broken image with a placeholder");
 
 const installClick = listeners.get("#install-app-button")?.get("click");
 assert.equal(typeof installClick, "function", "Home page must expose an install/add-to-home-screen action");
@@ -188,4 +204,4 @@ assert.equal(getElement("#install-dialog").open, true, "The install action must 
 assert.match(manifestSource, /"display": "standalone"/, "Manifest must request standalone app display");
 assert.match(manifestSource, /192x192/, "Manifest must include a 192px icon");
 assert.match(manifestSource, /512x512/, "Manifest must include a 512px icon");
-console.log("UI smoke test passed: startup, settings, details, web fullscreen, swipe/hold gesture separation, unobtrusive playback UI, installation guide, and PWA manifest.");
+console.log("UI smoke test passed: startup, settings, details, web fullscreen, swipe/hold separation, catalogue image retry/fallback, installation guide, and PWA manifest.");

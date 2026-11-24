@@ -242,6 +242,26 @@
     }
   }
 
+  function handleGridImageError(event) {
+    const image = event.target;
+    if (!image || image.tagName !== "IMG") return;
+    const attempts = Number(image.dataset.retryCount) || 0;
+    if (attempts < 1) {
+      image.dataset.retryCount = String(attempts + 1);
+      const source = image.dataset.originalSrc || image.src;
+      const separator = source.includes("?") ? "&" : "?";
+      window.setTimeout(() => {
+        if (!image.isConnected) return;
+        image.src = source + separator + "_bxg_retry=" + Date.now();
+      }, 350);
+      return;
+    }
+    const placeholder = document.createElement("div");
+    placeholder.className = "poster-placeholder";
+    placeholder.textContent = "贝";
+    image.replaceWith(placeholder);
+  }
+
   function renderCards(items, append) {
     const grid = $("#series-grid");
     if (!items.length) {
@@ -256,7 +276,7 @@
       const tag = data.tag ? '<span class="poster-tag">' + escapeHTML(data.tag) + '</span>' : "";
       return '<article class="series-card" tabindex="0" role="button" data-id="' + escapeHTML(data.id) + '" aria-label="查看 ' + escapeHTML(data.title) + '">' +
         '<div class="poster-wrap">' +
-        (cover ? '<img loading="lazy" decoding="async" src="' + escapeHTML(cover) + '" alt="' + escapeHTML(data.title) + '">' : '<div class="poster-placeholder">贝</div>') +
+        (cover ? '<img loading="lazy" decoding="async" src="' + escapeHTML(cover) + '" data-original-src="' + escapeHTML(cover) + '" alt="' + escapeHTML(data.title) + '">' : '<div class="poster-placeholder">贝</div>') +
         tag + (fav ? '<span class="poster-tag favorite-tag">♥</span>' : "") +
         '</div><h3 class="card-title">' + escapeHTML(data.title) + '</h3>' +
         '<div class="card-meta">' + escapeHTML(data.episode_count ? data.episode_count + " 集" : data.heat || "短剧") + '</div>' +
@@ -1253,6 +1273,7 @@
     });
   }, {passive:true});
   window.addEventListener("resize", maybeAutoLoadMore, {passive:true});
+  $("#series-grid").addEventListener("error", handleGridImageError, true);
   $("#series-grid").addEventListener("click", (event) => {
     const card = event.target.closest(".series-card");
     if (card) openDetail(card.dataset.id);

@@ -548,6 +548,134 @@ func (p *Proxy) Prefetch(ctx context.Context, raw string) error {
 	return err
 }
 
+// PrefetchJSON downloads every image URL found in a catalogue/API JSON response.
+// It uses the foreground concurrency budget and retries each failed image once.
+func (p *Proxy) PrefetchJSON(ctx context.Context, raw []byte) (total, succeeded, failed int) {
+	urls := make([]string, 0, 32)
+	collectImageURLs(json.RawMessage(raw), &urls)
+	urls = uniqueImageURLs(urls)
+	total = len(urls)
+	if total == 0 {
+		return 0, 0, 0
+	}
+
+	workerCount := min(imageFetchConcurrency, total)
+	jobs := make(chan string)
+	var workers sync.WaitGroup
+	var resultMu sync.Mutex
+	for i := 0; i < workerCount; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for source := range jobs {
+				err := p.prefetchWithRetry(ctx, source)
+				if err != nil {
+					if u, parseErr := url.Parse(source); parseErr == nil {
+						p.logger.Printf("foreground image prefetch failed source_host=%q error_type=%T", u.Hostname(), err)
+					} else {
+						p.logger.Printf("foreground image prefetch failed error_type=%T", err)
+					}
+				}
+				resultMu.Lock()
+				if err == nil {
+					succeeded++
+				}
+				resultMu.Unlock()
+			}
+		}()
+	}
+
+sendLoop:
+	for _, source := range urls {
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case jobs <- source:
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	failed = total - succeeded
+	return total, succeeded, failed
+}
+
+func (p *Proxy) prefetchWithRetry(ctx context.Context, source string) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		imageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lastErr = p.Prefetch(imageCtx, source)
+		cancel()
+		if lastErr == nil || ctx.Err() != nil {
+			return lastErr
+		}
+		if attempt == 0 {
+			timer := time.NewTimer(350 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return lastErr
+}
+
+func collectImageURLs(raw json.RawMessage, output *[]string) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return
+	}
+	switch raw[0] {
+	case '{':
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil {
+			return
+		}
+		for key, value := range fields {
+			if isImageField(key) {
+				var source string
+				if json.Unmarshal(value, &source) == nil {
+					if strings.TrimSpace(source) != "" {
+						*output = append(*output, strings.TrimSpace(source))
+					}
+					continue
+				}
+			}
+			collectImageURLs(value, output)
+		}
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(raw, &items) != nil {
+			return
+		}
+		for _, item := range items {
+			collectImageURLs(item, output)
+		}
+	}
+}
+
+func uniqueImageURLs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		key := raw
+		if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+			key = strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + u.EscapedPath()
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, raw)
+	}
+	return out
+}
+
 func (p *Proxy) pruneRAMLocked(now time.Time) {
 	for _, item := range p.byToken {
 		if len(item.body) == 0 || p.ramIdle <= 0 || now.Sub(item.lastUsed) <= p.ramIdle {

@@ -382,3 +382,37 @@ func TestServeHTTPPromotesPersistentImageAfterRAMIdleEviction(t *testing.T) {
 		t.Fatalf("persistent cache response status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
+
+
+func TestPrefetchJSONDownloadsEveryUniqueCoverAndRetriesOnce(t *testing.T) {
+	p := New()
+	p.validate = func(*url.URL) error { return nil }
+
+	var mu sync.Mutex
+	calls := map[string]int{}
+	p.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		calls[req.URL.Path]++
+		call := calls[req.URL.Path]
+		mu.Unlock()
+		if req.URL.Path == "/a.jpg" && call == 1 {
+			return nil, errors.New("temporary CDN failure")
+		}
+		return imageResponse(req, http.StatusOK, "image/jpeg", []byte{0xff, 0xd8, 0xff, 0xd9}), nil
+	})}
+
+	raw := []byte(`{"items":[{"cover_url":"https://cdn.example/a.jpg?signature=one"},{"cover_url":"https://cdn.example/a.jpg?signature=two"},{"nested":{"thumb_url":"https://cdn.example/b.jpg"}}]}`)
+	total, succeeded, failed := p.PrefetchJSON(context.Background(), raw)
+	if total != 2 || succeeded != 2 || failed != 0 {
+		t.Fatalf("prefetch totals = %d/%d/%d, want 2/2/0", total, succeeded, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["/a.jpg"] != 2 || calls["/b.jpg"] != 1 {
+		t.Fatalf("CDN calls = %#v, want one retry for a.jpg and one fetch for b.jpg", calls)
+	}
+	stats := p.Stats()
+	if stats.RAMEntries != 2 {
+		t.Fatalf("RAM cache entries = %d, want 2", stats.RAMEntries)
+	}
+}

@@ -453,7 +453,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 	var stale []byte
 	if ttl := cacheTTL(operation); ttl > 0 {
 		if cached, ok := s.getCached(cacheKey); ok {
-			s.writePayload(w, cached)
+			s.writeOperationPayload(w, operation, cached)
 			return
 		}
 		stale, _ = s.getStaleCached(cacheKey)
@@ -497,7 +497,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		}
 		if len(stale) > 0 {
 			s.logger.Printf("serving stale API cache operation=%s", operation)
-			s.writePayload(w, stale)
+			s.writeOperationPayload(w, operation, stale)
 			return
 		}
 		id, _ := r.Context().Value(requestIDKey).(string)
@@ -525,7 +525,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 	if ttl := cacheTTL(operation); ttl > 0 {
 		s.storeCached(cacheKey, raw, ttl)
 	}
-	s.writePayload(w, raw)
+	s.writeOperationPayload(w, operation, raw)
 }
 
 func cacheTTL(operation string) time.Duration {
@@ -615,6 +615,33 @@ func (s *Server) storeCached(key string, data []byte, ttl time.Duration) {
 	copyOfData := append([]byte(nil), data...)
 	s.apiCache[key] = cacheEntry{data: copyOfData, expiresAt: now.Add(ttl), createdAt: now}
 	s.cacheBytes += len(copyOfData)
+}
+
+func shouldPrefetchForegroundImages(operation string) bool {
+	switch operation {
+	case "discover", "search", "rank", "short-rank", "new-releases", "hot-search":
+		return true
+	default:
+		return false
+	}
+}
+
+// writeOperationPayload starts full-speed cover prefetch for user-requested
+// catalogue pages. The HTTP response is not delayed by image downloads.
+func (s *Server) writeOperationPayload(w http.ResponseWriter, operation string, raw []byte) {
+	if s.images != nil && shouldPrefetchForegroundImages(operation) && len(raw) > 0 {
+		payload := append([]byte(nil), raw...)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			total, succeeded, failed := s.images.PrefetchJSON(ctx, payload)
+			if total > 0 {
+				s.logger.Printf("foreground image prefetch operation=%s total=%d succeeded=%d failed=%d",
+					operation, total, succeeded, failed)
+			}
+		}()
+	}
+	s.writePayload(w, raw)
 }
 
 func (s *Server) writePayload(w http.ResponseWriter, raw []byte) {

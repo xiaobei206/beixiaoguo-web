@@ -195,3 +195,31 @@ func TestOpenRangeSkipsEmptyPrimaryAndUsesBackup(t *testing.T) {
 		t.Fatalf("upstream attempts = %v, want empty primary then valid backup", attempts)
 	}
 }
+
+func TestPlaybackActivityHeartbeatAndIdleGrace(t *testing.T) {
+	service := New(nil, nil)
+	if service.PlaybackActive() {
+		t.Fatal("new media service unexpectedly reports playback")
+	}
+	service.SetPlaybackState("browser-one", true)
+	if !service.PlaybackActive() {
+		t.Fatal("playing heartbeat was not detected")
+	}
+	service.SetPlaybackState("browser-one", false)
+	if service.PlaybackActive() {
+		t.Fatal("paused client still reports playback")
+	}
+	service.SetIdleGrace(30 * time.Second)
+	service.mu.Lock()
+	service.lastStreamActivity = time.Now().Add(-time.Minute)
+	service.mu.Unlock()
+	if service.PlaybackActive() {
+		t.Fatal("old TV media activity did not expire")
+	}
+	service.mu.Lock()
+	service.lastStreamActivity = time.Now()
+	service.mu.Unlock()
+	if !service.PlaybackActive() {
+		t.Fatal("recent TV media activity was not detected")
+	}
+}

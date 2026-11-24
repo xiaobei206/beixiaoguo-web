@@ -15,8 +15,9 @@ func TestAPICacheStoresExpiresAndEvicts(t *testing.T) {
 	item.expiresAt=time.Now().Add(-time.Second)
 	s.apiCache["one"]=item
 	s.cacheMu.Unlock()
-	if _,ok:=s.getCached("one");ok {t.Fatal("expired cache entry was served")}
-	if len(s.apiCache)!=0 {t.Fatal("expired entry was not removed")}
+	if _,ok:=s.getCached("one");ok {t.Fatal("expired cache entry was served as fresh")}
+	if stale,ok:=s.getStaleCached("one");!ok || string(stale)!="first" {t.Fatalf("stale entry was not retained: %q %v",stale,ok)}
+	if len(s.apiCache)!=1 {t.Fatal("expired entry was removed before refresh could use it")}
 }
 
 func TestCacheTTLByOperation(t *testing.T) {
@@ -115,5 +116,23 @@ func TestAcquireRequestQueueIsBounded(t *testing.T) {
 	cancel()
 	if acquireRequestQueue(ctx, queue) {
 		t.Fatal("cancelled request entered the queue")
+	}
+}
+
+
+func TestStaleAPICacheSurvivesExpiryForFallback(t *testing.T) {
+	s := &Server{apiCache: make(map[string]cacheEntry)}
+	s.storeCached("discover:/api/v1/discover?channel=推荐", []byte("old-list"), time.Minute)
+	s.cacheMu.Lock()
+	item := s.apiCache["discover:/api/v1/discover?channel=推荐"]
+	item.expiresAt = time.Now().Add(-time.Second)
+	s.apiCache["discover:/api/v1/discover?channel=推荐"] = item
+	s.cacheMu.Unlock()
+
+	if _, ok := s.getCached("discover:/api/v1/discover?channel=推荐"); ok {
+		t.Fatal("expired API data was treated as fresh")
+	}
+	if got, ok := s.getStaleCached("discover:/api/v1/discover?channel=推荐"); !ok || string(got) != "old-list" {
+		t.Fatalf("stale fallback = %q, %v", got, ok)
 	}
 }

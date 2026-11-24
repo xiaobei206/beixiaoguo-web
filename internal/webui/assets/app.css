@@ -242,3 +242,5 @@ main { min-height:65vh; }
 .season-loading,.season-load-error { align-self:center; color:var(--muted); font-size:12px; }
 .season-retry { padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(255,255,255,.04); cursor:pointer; font-size:11px; }
 @media (max-width:520px) { .season-section { margin-left:-2px; margin-right:-2px; padding:11px; } .season-chip { min-height:37px; padding:7px 10px; } }
+
+.topbar-actions .lan-pill { margin-left:0; }

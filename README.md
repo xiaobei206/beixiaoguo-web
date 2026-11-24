@@ -2,9 +2,20 @@
 
 面向家庭局域网的短剧 Web 客户端。后端使用 Go，前端使用原生 TypeScript/JavaScript、HTML 与 CSS；构建后由一个 Go 可执行文件提供网页和 API。
 
-> 当前版本：**0.1.12**
+> 当前版本：**0.1.13**
 >
 > 本项目是非官方个人项目，与红果短剧及其运营方无关联。请遵守内容平台的服务条款与适用法律，仅访问有权访问的内容。
+
+## 0.1.13
+
+- 新增右上角“缓存与智能预热”设置页；缓存容量、闲置淘汰时间、闪存保留时间、预热开关/数量和播放空闲判定都保存到 `/opt/beixiaoguo/settings.json`，保存后立即生效，无需重新编译或重启；设置接口不增加账号/密码验证，供家庭局域网使用。
+- 图片缓存默认 224 MiB RAM + 最多 4 GiB 闪存，RAM 图片按 7 天闲置淘汰，闪存按 90 天闲置保留并按 LRU 腾空间；磁盘写入至少保留 1 GiB 系统可用空间，不预分配。
+- 移除图片 RAM 12 小时强制过期；RAM 命中不再定时回读闪存，只有真正闲置淘汰或容量 LRU 淘汰时才从闪存恢复。闪存缓存命中不会反复改写文件。
+- API RAM 默认 64 MiB / 4096 条；目录列表 70 分钟、排行榜 40 分钟、搜索 6 小时、热搜 30 分钟、作品详情/季信息 24 小时、分集目录 12 小时、搜索联想 24 小时。刷新失败时仍可返回进程中保留的过期列表，成功刷新后才替换。
+- 不建立永久剧情数据库；作品文字/目录数据保存在 RAM，服务重启后由预热重新获取。旧列表会在进程内保留为刷新失败时的备用内容。
+- 新增开机预热与每小时整点巡检：推荐、真人剧、漫剧、找剧、电影、小说、排行榜、当日新剧各预热目标 100 条，热搜预热完整返回结果；列表与封面进入正常缓存。
+- 后台 API 预热单线程、图片下载最多 2 路；API 每次独立 10 秒超时、图片 15 秒超时，API 请求至少间隔 1.2 秒。超时失败单项跳过并记录，不阻塞其他频道；后台只在前台请求队列空闲时占用一个 API 槽，其余 3 个保留给前台。
+- 浏览器播放心跳和 N1 媒体流共同识别播放活动；播放期间取消/暂停预热，停止播放后默认等待 3 分钟才恢复。预热状态、数量、失败数、缓存占用和下次运行时间都能在设置页查看，也可手动立即预热。
 
 ## 0.1.12
 
@@ -86,7 +97,7 @@
 
 ## N1 / iStoreOS 安装与更新
 
-推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版并校验 SHA-256，将程序安装到持久化的 `/usr/bin/beixiaoguo`，再注册 `/etc/init.d/beixiaoguo` 开机服务和健康检查守护。程序日志由 OpenWrt RAM 日志系统保存；图片首次下载成功时会写入持久缓存，后续命中只读。默认图片缓存路径为 /opt/beixiaoguo/cache/images，最多 1 GiB，不会预分配；需要避开 TF 卡时，可把该目录改到已挂载的 USB/SSD 存储：
+推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版并校验 SHA-256，将程序安装到持久化的 `/usr/bin/beixiaoguo`，再注册 `/etc/init.d/beixiaoguo` 开机服务和健康检查守护。程序日志由 OpenWrt RAM 日志系统保存；图片首次下载成功时会写入持久缓存，后续命中只读。默认图片缓存路径为 `/opt/beixiaoguo/cache/images`，默认上限 4 GiB、不预分配，并至少保留 1 GiB 系统可用空间；运行设置保存在 `/opt/beixiaoguo/settings.json`。需要避开 TF 卡时，可把图片缓存目录改到已挂载的 USB/SSD 存储：
 
 ```sh
 wget -qO /tmp/beixiaoguo-install.sh https://raw.githubusercontent.com/xiaobei206/beixiaoguo-web/main/scripts/install-n1.sh && sh /tmp/beixiaoguo-install.sh
@@ -112,12 +123,13 @@ make build-arm64
 |---|---|---|
 | `BEIXIAOGUO_ADDR` | `0.0.0.0:8780` | HTTP 监听地址 |
 | `BEIXIAOGUO_IMAGE_CACHE_DIR` | `/opt/beixiaoguo/cache/images`（N1 服务） | 持久图片缓存目录；留空则只使用 RAM 缓存 |
+| `BEIXIAOGUO_SETTINGS_PATH` | `/opt/beixiaoguo/settings.json`（N1 服务） | 缓存与预热设置文件 |
 
 ## API
 
 播放 API：`GET /api/v1/play/{episodeID}?quality=720p` 返回同源媒体地址；浏览器随后使用 `GET /api/v1/media/{token}` 和标准 `Range` 请求播放。令牌、上游 URL 与 CENC 密钥仅保存在服务端内存。
 
-封面代理：目录 API 的 `cover_url` / `avatar_url` 等字段会被改写为 `/api/v1/images/{token}`。N1 图片 RAM 缓存上限 224 MiB，缓存 12 小时；持久图片缓存上限 1 GiB，最长保留 30 天，按 LRU 淘汰；浏览器可缓存封面 7 天并允许离线使用旧图。目录 API RAM 缓存上限 32 MiB。health 接口返回缓存占用和队列深度。
+封面代理：目录 API 的 `cover_url` / `avatar_url` 等字段会被改写为 `/api/v1/images/{token}`。默认图片 RAM 上限 224 MiB，按闲置时间淘汰；持久图片缓存上限 4 GiB，默认闲置保留 90 天，按 LRU 淘汰。页面 API 与作品文字资料保存在 RAM，默认 64 MiB / 4096 条，不写入永久剧情数据库；重启后由后台预热重新构建。缓存、预热和播放活动状态可通过 `/api/v1/health` 与 `/api/v1/settings` 查看；设置接口支持 GET/PUT，手动预热入口为 POST `/api/v1/preheat/run`。
 
 ## 文档
 

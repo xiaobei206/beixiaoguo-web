@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	apiCacheMaxEntries = 256
-	apiCacheMaxBytes   = 32 << 20
+	apiCacheMaxEntries = 4096
+	apiCacheMaxBytes   = 64 << 20
 	apiRequestTimeout  = 25 * time.Second
 	apiUpstreamSlots   = 4
 	apiQueueCapacity   = 24
@@ -48,6 +48,13 @@ type Server struct {
 	cacheMu    sync.Mutex
 	apiCache   map[string]cacheEntry
 	cacheBytes int
+
+	settings       *settingsStore
+	preheatMu      sync.Mutex
+	preheat         preheatStatus
+	preheatTrigger chan struct{}
+	preheatRateMu  sync.Mutex
+	preheatLastCall time.Time
 }
 
 type contextKey uint8
@@ -55,6 +62,15 @@ type contextKey uint8
 const requestIDKey contextKey = 1
 
 func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
+	return newHandler(client, version, logger, false)
+}
+
+// NewWithPreheater starts the idle preheater. Tests and embedded callers can use New to avoid background network work.
+func NewWithPreheater(client *sdk.Client, version string, logger *log.Logger) http.Handler {
+	return newHandler(client, version, logger, true)
+}
+
+func newHandler(client *sdk.Client, version string, logger *log.Logger, startPreheater bool) http.Handler {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -68,10 +84,16 @@ func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 		slots:     make(chan struct{}, apiUpstreamSlots),
 		queue:     make(chan struct{}, apiQueueCapacity),
 		apiCache:  make(map[string]cacheEntry),
+		settings:  newSettingsStore(logger),
 	}
+	s.applySettings()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
+	mux.HandleFunc("GET /api/v1/settings", s.handleSettings)
+	mux.HandleFunc("PUT /api/v1/settings", s.handleSettings)
+	mux.HandleFunc("POST /api/v1/preheat/run", s.preheatRun)
+	mux.HandleFunc("POST /api/v1/playback/activity", s.playbackActivity)
 	mux.HandleFunc("GET /api/v1/discover", s.discover)
 	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("GET /api/v1/suggest", s.suggest)
@@ -88,7 +110,11 @@ func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 	mux.HandleFunc("POST /api/v1/tv/handoff", s.tvHandoff)
 	mux.Handle("/", webui.Handler())
 
-	return s.middleware(mux)
+	handler := s.middleware(mux)
+	if startPreheater {
+		s.startPreheater()
+	}
+	return handler
 }
 
 func (s *Server) middleware(next http.Handler) http.Handler {
@@ -114,6 +140,36 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, settingsResponse(s))
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		var next RuntimeSettings
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&next); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_SETTINGS", "设置格式无效", "")
+			return
+		}
+		updated, err := s.settings.Update(next)
+		if err != nil {
+			s.logger.Printf("settings save failed error=%v", err)
+			writeError(w, http.StatusInternalServerError, "SETTINGS_SAVE_FAILED", "设置保存失败，请检查 /opt 空间", "")
+			return
+		}
+		s.applySettings()
+		if !updated.PreheatEnabled {
+			s.updatePreheat(func(st *preheatStatus) { if st.Running { st.Phase = "正在停止" } })
+		}
+		writeJSON(w, http.StatusOK, settingsResponse(s))
+	default:
+		w.Header().Set("Allow", "GET, PUT")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	s.cacheMu.Lock()
 	apiEntries, apiBytes := len(s.apiCache), s.cacheBytes
@@ -131,7 +187,8 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"cache": map[string]any{
 			"api_entries": apiEntries,
 			"api_bytes": apiBytes,
-			"api_limit_bytes": apiCacheMaxBytes,
+			"api_limit_bytes": s.settings.Get().APIRAMMiB << 20,
+			"api_limit_entries": s.settings.Get().APIMaxEntries,
 			"image_ram_entries": imageStats.RAMEntries,
 			"image_ram_bytes": imageStats.RAMBytes,
 			"image_ram_limit_bytes": imageStats.RAMLimitBytes,
@@ -149,6 +206,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 			"queued": imageStats.FetchQueued,
 			"capacity": imageStats.FetchQueueCapacity,
 		},
+		"preheat": s.preheatSnapshot(),
 	})
 }
 
@@ -285,6 +343,27 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) playbackActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	var request struct {
+		ClientID string `json:"client_id"`
+		Playing  bool   `json:"playing"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.ClientID) == "" || len(request.ClientID) > 96 {
+		writeError(w, http.StatusBadRequest, "INVALID_PLAYBACK_ACTIVITY", "播放状态参数无效", "")
+		return
+	}
+	s.media.SetPlaybackState(request.ClientID, request.Playing)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "playing": request.Playing})
+}
+
 func (s *Server) tvDevices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
@@ -345,11 +424,13 @@ func acquireRequestSlot(ctx context.Context, slots chan struct{}) bool {
 
 func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, call func(context.Context) (any, error)) {
 	cacheKey := operation + ":" + r.URL.RequestURI()
+	var stale []byte
 	if ttl := cacheTTL(operation); ttl > 0 {
 		if cached, ok := s.getCached(cacheKey); ok {
 			s.writePayload(w, cached)
 			return
 		}
+		stale, _ = s.getStaleCached(cacheKey)
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
@@ -388,6 +469,11 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
 			return
 		}
+		if len(stale) > 0 {
+			s.logger.Printf("serving stale API cache operation=%s", operation)
+			s.writePayload(w, stale)
+			return
+		}
 		id, _ := r.Context().Value(requestIDKey).(string)
 		status, code, message := http.StatusBadGateway, "UPSTREAM_ERROR", "片库请求失败，请稍后重试"
 		switch {
@@ -416,18 +502,20 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 
 func cacheTTL(operation string) time.Duration {
 	switch operation {
-	case "discover", "rank", "short-rank", "new-releases":
-		return 10 * time.Minute
+	case "discover", "new-releases":
+		return 70 * time.Minute
+	case "rank", "short-rank":
+		return 40 * time.Minute
 	case "search":
-		return 5 * time.Minute
+		return 6 * time.Hour
 	case "hot-search":
-		return 3 * time.Minute
-	case "series", "seasons":
 		return 30 * time.Minute
+	case "series", "seasons":
+		return 24 * time.Hour
 	case "episodes":
-		return 20 * time.Minute
+		return 12 * time.Hour
 	case "suggest":
-		return 2 * time.Minute
+		return 24 * time.Hour
 	default:
 		return 0
 	}
@@ -441,15 +529,32 @@ func (s *Server) getCached(key string) ([]byte, bool) {
 		return nil, false
 	}
 	if time.Now().After(item.expiresAt) {
-		s.cacheBytes -= len(item.data)
-		delete(s.apiCache, key)
+		return nil, false
+	}
+	return item.data, true
+}
+
+func (s *Server) getStaleCached(key string) ([]byte, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	item, ok := s.apiCache[key]
+	if !ok || len(item.data) == 0 {
 		return nil, false
 	}
 	return item.data, true
 }
 
 func (s *Server) storeCached(key string, data []byte, ttl time.Duration) {
-	if len(data) == 0 || len(data) > apiCacheMaxBytes/2 {
+	if len(data) == 0 {
+		return
+	}
+	settings := defaultRuntimeSettings()
+	if s.settings != nil {
+		settings = s.settings.Get()
+	}
+	maxBytes := settings.APIRAMMiB << 20
+	maxEntries := settings.APIMaxEntries
+	if len(data) > maxBytes/2 {
 		return
 	}
 	s.cacheMu.Lock()
@@ -465,7 +570,7 @@ func (s *Server) storeCached(key string, data []byte, ttl time.Duration) {
 		s.cacheBytes -= len(previous.data)
 		delete(s.apiCache, key)
 	}
-	for len(s.apiCache) >= apiCacheMaxEntries || s.cacheBytes+len(data) > apiCacheMaxBytes {
+	for len(s.apiCache) >= maxEntries || s.cacheBytes+len(data) > maxBytes {
 		var oldestKey string
 		var oldest time.Time
 		for existingKey, item := range s.apiCache {

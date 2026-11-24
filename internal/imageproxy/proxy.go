@@ -25,14 +25,13 @@ import (
 )
 
 const (
-	maxImageBytes = 8 << 20
-	maxCacheBytes = 224 << 20
-	entryLifetime = 45 * 24 * time.Hour
-	cacheLifetime = 12 * time.Hour
-
-	maxDiskCacheBytes      = int64(1 << 30)
-	imageFetchConcurrency  = 8
-	imageFetchQueueCapacity = 64
+	maxImageBytes            = 8 << 20
+	defaultImageRAMBytes     = int64(224 << 20)
+	defaultImageRAMIdle      = 7 * 24 * time.Hour
+	entryLifetime            = 45 * 24 * time.Hour
+	defaultDiskCacheBytes    = int64(4 << 30)
+	imageFetchConcurrency    = 8
+	imageFetchQueueCapacity  = 64
 )
 
 type Proxy struct {
@@ -45,7 +44,9 @@ type Proxy struct {
 	mu          sync.Mutex
 	byToken     map[string]*entry
 	bySource    map[string]string
-	cacheBytes  int64
+	cacheBytes     int64
+	ramLimitBytes int64
+	ramIdle       time.Duration
 }
 
 type entry struct {
@@ -68,13 +69,13 @@ func New(loggers ...*log.Logger) *Proxy {
 	}
 
 	diskDir := strings.TrimSpace(os.Getenv("BEIXIAOGUO_IMAGE_CACHE_DIR"))
-	disk, diskErr := newDiskCache(diskDir, maxDiskCacheBytes)
+	disk, diskErr := newDiskCache(diskDir, defaultDiskCacheBytes)
 	if diskErr != nil {
 		logger.Printf("image disk cache disabled error_type=%T", diskErr)
 		disk = nil
 	} else if disk != nil {
 		diskBytes, diskEntries := disk.stats()
-		logger.Printf("image disk cache ready bytes=%d entries=%d max_bytes=%d", diskBytes, diskEntries, maxDiskCacheBytes)
+		logger.Printf("image disk cache ready bytes=%d entries=%d max_bytes=%d", diskBytes, diskEntries, defaultDiskCacheBytes)
 	}
 
 	transport := &http.Transport{
@@ -98,6 +99,8 @@ func New(loggers ...*log.Logger) *Proxy {
 		fetchSlots: make(chan struct{}, imageFetchConcurrency),
 		fetchQueue: make(chan struct{}, imageFetchQueueCapacity),
 		byToken:    make(map[string]*entry),
+		ramLimitBytes: defaultImageRAMBytes,
+		ramIdle: defaultImageRAMIdle,
 		bySource:  make(map[string]string),
 	}
 	p.client = &http.Client{
@@ -138,10 +141,12 @@ func (p *Proxy) Register(raw string) string {
 	defer p.mu.Unlock()
 	now:=time.Now()
 	p.pruneLocked(now)
+	p.pruneRAMLocked(now)
 	if token:=p.bySource[sourceKey]; token!="" {
 		if old:=p.byToken[token]; old!=nil {
 			old.sourceURL=raw
 			old.expiresAt=now.Add(entryLifetime)
+			old.lastUsed=now
 			return "/api/v1/images/"+token
 		}
 	}
@@ -215,6 +220,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 	}
 	token:=r.PathValue("token")
 	p.mu.Lock()
+	p.pruneRAMLocked(time.Now())
 	item:=p.byToken[token]
 	if item!=nil && time.Now().After(item.expiresAt) {
 		p.removeLocked(token)
@@ -229,7 +235,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter,r *http.Request) {
 	body:=item.body
 	contentType:=item.contentType
 	etag:=item.etag
-	fresh:=len(body)>0 && time.Since(item.cachedAt)<cacheLifetime
+	fresh:=len(body)>0
 	source:=item.sourceURL
 	p.mu.Unlock()
 
@@ -314,7 +320,7 @@ func (p *Proxy) fetch(ctx context.Context, item *entry, raw string) ([]byte, str
 	defer item.fetchMu.Unlock()
 
 	p.mu.Lock()
-	if len(item.body) > 0 && time.Since(item.cachedAt) < cacheLifetime {
+	if len(item.body) > 0 {
 		body, contentType, etag := item.body, item.contentType, item.etag
 		p.mu.Unlock()
 		return body, contentType, etag, nil
@@ -395,7 +401,7 @@ func (p *Proxy) fetchSource(ctx context.Context, sourceRaw, requestRaw string, r
 		return nil, "", err
 	}
 	req.Header.Set("Accept", "image/jpeg,image/png,image/webp;q=0.95,image/avif;q=0.85,*/*;q=0.2")
-	req.Header.Set("User-Agent", "Beixiaoguo/0.1.12 image-proxy")
+	req.Header.Set("User-Agent", "Beixiaoguo/0.1.13 image-proxy")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -481,8 +487,12 @@ type CacheStats struct {
 }
 
 func (p *Proxy) Stats() CacheStats {
+	p.mu.Lock()
+	p.pruneRAMLocked(time.Now())
+	ramLimit := p.ramLimitBytes
+	p.mu.Unlock()
 	stats := CacheStats{
-		RAMLimitBytes:      maxCacheBytes,
+		RAMLimitBytes:      ramLimit,
 		FetchActive:        len(p.fetchSlots),
 		FetchQueued:        len(p.fetchQueue),
 		FetchQueueCapacity: cap(p.fetchQueue),
@@ -497,9 +507,61 @@ func (p *Proxy) Stats() CacheStats {
 	p.mu.Unlock()
 	if p.disk != nil {
 		stats.DiskBytes, stats.DiskEntries = p.disk.stats()
-		stats.DiskLimitBytes = p.disk.maxBytes
+		stats.DiskLimitBytes = p.disk.limitBytes()
 	}
 	return stats
+}
+
+// Configure applies runtime cache limits without restarting the service.
+func (p *Proxy) Configure(ramLimitBytes int64, ramIdle time.Duration, diskLimitBytes int64, diskLifetime time.Duration) {
+	if ramLimitBytes < 1 {
+		ramLimitBytes = defaultImageRAMBytes
+	}
+	if ramIdle < time.Hour {
+		ramIdle = defaultImageRAMIdle
+	}
+	p.mu.Lock()
+	p.ramLimitBytes = ramLimitBytes
+	p.ramIdle = ramIdle
+	p.pruneRAMLocked(time.Now())
+	p.evictLocked("")
+	p.mu.Unlock()
+	if p.disk != nil {
+		p.disk.SetLimits(diskLimitBytes, diskLifetime)
+	}
+}
+
+// Prefetch downloads an image into the normal RAM/disk caches without an HTTP client request.
+func (p *Proxy) Prefetch(ctx context.Context, raw string) error {
+	local := p.Register(raw)
+	if local == "" {
+		return fmt.Errorf("image URL rejected")
+	}
+	token := strings.TrimPrefix(local, "/api/v1/images/")
+	p.mu.Lock()
+	item := p.byToken[token]
+	p.mu.Unlock()
+	if item == nil {
+		return fmt.Errorf("image entry disappeared")
+	}
+	_, _, _, err := p.fetch(ctx, item, raw)
+	return err
+}
+
+func (p *Proxy) pruneRAMLocked(now time.Time) {
+	for _, item := range p.byToken {
+		if len(item.body) == 0 || p.ramIdle <= 0 || now.Sub(item.lastUsed) <= p.ramIdle {
+			continue
+		}
+		p.cacheBytes -= int64(len(item.body))
+		item.body = nil
+		item.contentType = ""
+		item.etag = ""
+		item.cachedAt = time.Time{}
+	}
+	if p.cacheBytes < 0 {
+		p.cacheBytes = 0
+	}
 }
 
 func (p *Proxy) pruneLocked(now time.Time) {
@@ -518,7 +580,7 @@ func (p *Proxy) removeLocked(token string) {
 }
 
 func (p *Proxy) evictLocked(keep string) {
-	for p.cacheBytes>maxCacheBytes {
+	for p.cacheBytes>p.ramLimitBytes {
 		var victim *entry
 		for token,item:=range p.byToken {
 			if token==keep {continue}

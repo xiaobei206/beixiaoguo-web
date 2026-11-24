@@ -13,8 +13,8 @@ import (
 
 const (
 	diskCacheMagic    = "BXGIMG1\n"
-	diskCacheLifetime = 30 * 24 * time.Hour
-	minDiskFreeBytes  = int64(128 << 20)
+	diskCacheLifetime = 90 * 24 * time.Hour
+	minDiskFreeBytes  = int64(1 << 30)
 )
 
 type diskFile struct {
@@ -27,6 +27,8 @@ type diskCache struct {
 	mu       sync.Mutex
 	dir      string
 	maxBytes int64
+	lifetime time.Duration
+	minFree  int64
 	bytes    int64
 	entries  map[string]diskFile
 }
@@ -49,6 +51,8 @@ func newDiskCache(dir string, maxBytes int64) (*diskCache, error) {
 	cache := &diskCache{
 		dir:      dir,
 		maxBytes: maxBytes,
+		lifetime: diskCacheLifetime,
+		minFree:  minDiskFreeBytes,
 		entries:  make(map[string]diskFile),
 	}
 	files, err := os.ReadDir(dir)
@@ -71,10 +75,6 @@ func newDiskCache(dir string, maxBytes int64) (*diskCache, error) {
 		}
 		fileInfo, statErr := file.Info()
 		if statErr != nil || !fileInfo.Mode().IsRegular() {
-			continue
-		}
-		if now.Sub(fileInfo.ModTime()) > diskCacheLifetime {
-			_ = os.Remove(filepath.Join(dir, name))
 			continue
 		}
 		cache.entries[key] = diskFile{
@@ -111,7 +111,7 @@ func (c *diskCache) load(key string) ([]byte, string, bool) {
 		c.mu.Unlock()
 		return nil, "", false
 	}
-	if time.Since(item.lastUsed) > diskCacheLifetime {
+	if time.Since(item.lastUsed) > c.lifetime {
 		c.removeLocked(key)
 		c.mu.Unlock()
 		return nil, "", false
@@ -171,7 +171,7 @@ func (c *diskCache) store(key, contentType string, body []byte) error {
 		return fmt.Errorf("cannot verify image cache free space: %w", err)
 	}
 	available := int64(filesystem.Bavail) * int64(filesystem.Bsize)
-	if available-int64(data.Len()) < minDiskFreeBytes {
+	if available-int64(data.Len()) < c.minFree {
 		return fmt.Errorf("image disk cache is preserving the final 128 MiB of free space")
 	}
 
@@ -270,6 +270,39 @@ func (c *diskCache) evictLocked(keep string) {
 		}
 		c.removeLocked(victimKey)
 	}
+}
+
+// SetLimits updates the persistent cache budget and retention policy at runtime.
+func (c *diskCache) SetLimits(maxBytes int64, lifetime time.Duration) {
+	if c == nil {
+		return
+	}
+	if maxBytes < 1 {
+		maxBytes = int64(4 << 30)
+	}
+	if lifetime < 24*time.Hour {
+		lifetime = diskCacheLifetime
+	}
+	c.mu.Lock()
+	c.maxBytes = maxBytes
+	c.lifetime = lifetime
+	now := time.Now()
+	for key, item := range c.entries {
+		if now.Sub(item.lastUsed) > c.lifetime {
+			c.removeLocked(key)
+		}
+	}
+	c.evictLocked("")
+	c.mu.Unlock()
+}
+
+func (c *diskCache) limitBytes() int64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maxBytes
 }
 
 func (c *diskCache) stats() (bytes int64, entries int) {

@@ -21,7 +21,10 @@
         <input id="search-input" type="search" autocomplete="off" placeholder="搜一部想看的短剧…" aria-label="搜索短剧">
         <button type="submit" aria-label="搜索">搜索</button>
       </form>
-      <span class="lan-pill"><span></span> 家庭局域网</span>
+      <div class="topbar-actions">
+        <span class="lan-pill"><span></span> 家庭局域网</span>
+        <button id="settings-button" class="settings-button" type="button" aria-label="缓存与预热设置">⚙ 设置</button>
+      </div>
     </header>
 
     <nav class="main-nav" aria-label="主导航">
@@ -68,7 +71,7 @@
     </main>
 
     <footer class="footer">
-      <span>贝小果 <b>0.1.10</b></span>
+      <span>贝小果 <b>0.1.13</b></span>
       <span>只在你的家庭网络中提供服务 · 浏览数据保存在当前浏览器</span>
     </footer>
   </div>
@@ -84,6 +87,50 @@
       <h2>投屏到 hongguoTV</h2>
       <p class="detail-meta">选择同一局域网内正在运行的电视</p>
       <div id="cast-dialog-content" class="cast-dialog-content"></div>
+    </div>
+  </dialog>
+
+  <dialog id="settings-dialog" class="detail-dialog settings-dialog">
+    <button id="settings-close" class="dialog-close" type="button" aria-label="关闭">×</button>
+    <div class="detail-content">
+      <h2>缓存与智能预热</h2>
+      <p class="detail-meta">运行时调整，保存后立即生效，无需重启。仅供家庭局域网使用。</p>
+      <div id="settings-live" class="settings-live">正在读取缓存状态…</div>
+      <form id="settings-form" class="settings-form">
+        <section class="settings-section">
+          <h3>自动预热</h3>
+          <label class="settings-check"><input id="preheat-enabled" type="checkbox"> 启用智能预热</label>
+          <label class="settings-check"><input id="preheat-startup" type="checkbox"> 服务启动后立即预热</label>
+          <label class="settings-check"><input id="preheat-hourly" type="checkbox"> 每小时整点更新</label>
+          <div class="settings-fields">
+            <label>每个目录预热数量<input id="preheat-items" type="number" min="20" max="300" step="10"></label>
+            <label>播放结束后空闲判定（秒）<input id="idle-seconds" type="number" min="60" max="600" step="30"></label>
+          </div>
+          <p class="settings-hint">默认 1 个目录 API 后台工作线程、2 个图片工作线程；单次 API 10 秒、图片 15 秒超时。播放或前台请求繁忙时自动让路。</p>
+        </section>
+        <section class="settings-section">
+          <h3>图片缓存</h3>
+          <div class="settings-fields">
+            <label>图片 RAM 上限（MiB）<input id="image-ram-mib" type="number" min="64" max="512" step="16"></label>
+            <label>图片闪存上限（GiB）<input id="image-disk-gib" type="number" min="1" max="8" step="1"></label>
+            <label>RAM 闲置淘汰（小时）<input id="image-ram-idle-hours" type="number" min="1" max="720" step="24"></label>
+            <label>闪存保留期限（天）<input id="image-disk-retention-days" type="number" min="7" max="365" step="7"></label>
+          </div>
+          <p class="settings-hint">RAM 淘汰不删除闪存副本；闪存按 LRU 淘汰，并至少保留 1GiB 系统剩余空间。</p>
+        </section>
+        <section class="settings-section">
+          <h3>文字与 API 缓存</h3>
+          <div class="settings-fields">
+            <label>API RAM 上限（MiB）<input id="api-ram-mib" type="number" min="16" max="256" step="16"></label>
+            <label>API 条目上限<input id="api-max-entries" type="number" min="256" max="8192" step="256"></label>
+          </div>
+          <p class="settings-hint">目录/详情/分集文字数据保存在 RAM；服务重启后由自动预热重新获取，不建立永久历史资料库。</p>
+        </section>
+        <div class="settings-actions">
+          <button type="submit" class="settings-primary">保存设置</button>
+          <button id="preheat-now" type="button" class="settings-secondary">立即预热</button>
+        </div>
+      </form>
     </div>
   </dialog>
 

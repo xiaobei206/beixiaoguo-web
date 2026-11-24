@@ -17,8 +17,8 @@ start_service() {
     return 1
   fi
 
-  # The disk cache is an evictable image-only cache. It is capped at 1 GiB
-  # by the application and is never preallocated.
+  # The image-only disk cache is evictable, capped at 4 GiB by default,
+  # and never preallocated. Runtime settings live in a small JSON file.
   if ! mkdir -p /opt/beixiaoguo/cache/images; then
     logger -t beixiaoguo "WARNING: persistent image cache directory is unavailable; RAM cache remains enabled"
   fi
@@ -27,7 +27,7 @@ start_service() {
   # bounded RAM log buffer instead of growing a log file.
   procd_open_instance app
   procd_set_param command "$APP_BIN"
-  procd_set_param env BEIXIAOGUO_IMAGE_CACHE_DIR=/opt/beixiaoguo/cache/images
+  procd_set_param env BEIXIAOGUO_IMAGE_CACHE_DIR=/opt/beixiaoguo/cache/images BEIXIAOGUO_SETTINGS_PATH=/opt/beixiaoguo/settings.json
   procd_set_param respawn 3600 5 0
   procd_set_param stdout 1
   procd_set_param stderr 1

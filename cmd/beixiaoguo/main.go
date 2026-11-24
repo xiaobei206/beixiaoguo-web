@@ -18,7 +18,7 @@ import (
 	"github.com/xiaobei206/beixiaoguo-web/internal/api"
 )
 
-var version = "0.1.12"
+var version = "0.1.13"
 
 func main() {
 	logger := log.New(os.Stdout, "[beixiaoguo] ", log.LstdFlags|log.Lmicroseconds)
@@ -42,7 +42,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           api.New(client, version, logger),
+		Handler:           api.NewWithPreheater(client, version, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,

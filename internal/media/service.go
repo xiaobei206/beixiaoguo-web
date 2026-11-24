@@ -60,9 +60,13 @@ type Service struct {
 	logger      *log.Logger
 	validateURL func(*url.URL) error
 
-	mu       sync.Mutex
-	sessions map[string]*playbackSession
-	streams  chan struct{}
+	mu                 sync.Mutex
+	sessions           map[string]*playbackSession
+	streams            chan struct{}
+	playingClients     map[string]time.Time
+	activeStreams      int
+	lastStreamActivity time.Time
+	idleGrace          time.Duration
 }
 
 type playbackSession struct {
@@ -113,8 +117,10 @@ func New(client *sdk.Client, logger *log.Logger) *Service {
 		httpClient:  &http.Client{Transport: transport, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 		logger:      logger,
 		validateURL: validatePublicURL,
-		sessions:    make(map[string]*playbackSession),
-		streams:     make(chan struct{}, maxMediaStreams),
+		sessions:       make(map[string]*playbackSession),
+		streams:        make(chan struct{}, maxMediaStreams),
+		playingClients: make(map[string]time.Time),
+		idleGrace:      3 * time.Minute,
 	}
 }
 
@@ -330,6 +336,54 @@ func (s *Service) session(token string) *playbackSession {
 	return session
 }
 
+// SetPlaybackState records browser player heartbeats. A missed heartbeat expires automatically.
+func (s *Service) SetPlaybackState(clientID string, playing bool) {
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" || len(clientID) > 96 {
+		return
+	}
+	s.mu.Lock()
+	if s.playingClients == nil {
+		s.playingClients = make(map[string]time.Time)
+	}
+	if playing {
+		s.playingClients[clientID] = time.Now()
+	} else {
+		delete(s.playingClients, clientID)
+	}
+	s.mu.Unlock()
+}
+
+// SetIdleGrace adjusts how long recent TV media traffic prevents background work.
+func (s *Service) SetIdleGrace(grace time.Duration) {
+	if grace < 30*time.Second {
+		grace = 3 * time.Minute
+	}
+	s.mu.Lock()
+	s.idleGrace = grace
+	s.mu.Unlock()
+}
+
+// PlaybackActive reports active browser playback or recent direct media traffic (including TV handoff).
+func (s *Service) PlaybackActive() bool {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, seen := range s.playingClients {
+		if now.Sub(seen) > 45*time.Second {
+			delete(s.playingClients, id)
+		}
+	}
+	if s.activeStreams > 0 || len(s.playingClients) > 0 {
+		return true
+	}
+	grace := s.idleGrace
+	if grace <= 0 {
+		grace = 3 * time.Minute
+	}
+	return !s.lastStreamActivity.IsZero() && now.Sub(s.lastStreamActivity) < grace
+}
+
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -341,6 +395,16 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "media session expired; resolve playback again", http.StatusGone)
 		return
 	}
+	s.mu.Lock()
+	s.activeStreams++
+	s.lastStreamActivity = time.Now()
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.activeStreams--
+		s.lastStreamActivity = time.Now()
+		s.mu.Unlock()
+	}()
 	select {
 	case s.streams <- struct{}{}:
 		defer func() { <-s.streams }()

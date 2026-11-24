@@ -11,6 +11,7 @@ func TestDiskCachePersistsAndEvictsLeastRecentlyUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cache.minFree = 0
 
 	bodyA := []byte("image-a")
 	bodyB := []byte("image-b")
@@ -50,6 +51,7 @@ func TestDiskCachePersistsAndEvictsLeastRecentlyUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reopened.minFree = 0
 	if _, _, ok := reopened.load(keyA); !ok {
 		t.Fatal("A did not survive cache restart")
 	}

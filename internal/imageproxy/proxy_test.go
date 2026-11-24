@@ -321,32 +321,32 @@ func TestImageFetchQueueIsBoundedAndCancelable(t *testing.T) {
 	}
 }
 
-func TestServeHTTPFallsBackToStaleRAMImageOnCDNError(t *testing.T) {
+func TestServeHTTPKeepsRAMImageFreshUntilIdleEviction(t *testing.T) {
 	p := New()
 	p.validate = func(*url.URL) error { return nil }
 	tokenURL := p.Register("https://cdn.example/poster.jpg")
 	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
 	item := p.byToken[token]
-	stale := []byte("previously-cached-image")
-	p.cacheRAM(item, stale, "image/jpeg")
+	cached := []byte("previously-cached-image")
+	p.cacheRAM(item, cached, "image/jpeg")
 	p.mu.Lock()
-	item.cachedAt = time.Now().Add(-cacheLifetime - time.Minute)
+	item.cachedAt = time.Now().Add(-48 * time.Hour)
 	p.mu.Unlock()
 	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return nil, errors.New("simulated CDN outage")
+		return nil, errors.New("RAM hit must not contact CDN")
 	})}
 
 	req := httptest.NewRequest(http.MethodGet, tokenURL, nil)
 	req.SetPathValue("token", token)
 	rec := httptest.NewRecorder()
 	p.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Body.String() != string(stale) {
-		t.Fatalf("stale response status=%d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || rec.Body.String() != string(cached) {
+		t.Fatalf("RAM response status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 
 
-func TestServeHTTPPromotesPersistentImageBeforeCDNRefresh(t *testing.T) {
+func TestServeHTTPPromotesPersistentImageAfterRAMIdleEviction(t *testing.T) {
 	p := New()
 	p.validate = func(*url.URL) error { return nil }
 	disk, err := newDiskCache(t.TempDir(), 1<<20)
@@ -354,6 +354,7 @@ func TestServeHTTPPromotesPersistentImageBeforeCDNRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.disk = disk
+	disk.minFree = 0
 	tokenURL := p.Register("https://cdn.example/poster.jpg")
 	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
 	item := p.byToken[token]
@@ -361,7 +362,7 @@ func TestServeHTTPPromotesPersistentImageBeforeCDNRefresh(t *testing.T) {
 	stale := []byte("old-ram-image")
 	p.cacheRAM(item, stale, "image/jpeg")
 	p.mu.Lock()
-	item.cachedAt = time.Now().Add(-cacheLifetime - time.Minute)
+	item.lastUsed = time.Now().Add(-8 * 24 * time.Hour)
 	p.mu.Unlock()
 
 	persistent := []byte("disk-cached-image")

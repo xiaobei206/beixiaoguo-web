@@ -3,6 +3,9 @@
 
   const $ = (selector) => document.querySelector(selector);
   const INITIAL_PRELOAD_TARGET = 100;
+  const playbackClientId = "bxg-web-" + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2));
+  let playbackHeartbeatTimer = 0;
+  let settingsRefreshTimer = 0;
   function todayDateKey() {
     const now = new Date();
     return String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
@@ -70,6 +73,29 @@
     }
   }
 
+  function setPlaybackActivity(playing) {
+    const payload = JSON.stringify({client_id:playbackClientId,playing:!!playing});
+    try {
+      fetch("/api/v1/playback/activity", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:payload,
+        keepalive:!playing
+      }).catch(() => {});
+    } catch (_) {}
+    window.clearInterval(playbackHeartbeatTimer);
+    playbackHeartbeatTimer = 0;
+    if (playing) {
+      playbackHeartbeatTimer = window.setInterval(() => {
+        fetch("/api/v1/playback/activity", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:payload
+        }).catch(() => {});
+      }, 15000);
+    }
+  }
+
   function showToast(message) {
     const el = $("#toast");
     el.textContent = message;
@@ -120,7 +146,97 @@
     $("#section-kicker").textContent = labels[0];
     $("#section-title").textContent = labels[1];
     $("#section-subtitle").textContent = labels[2];
-    document.querySelectorAll(".nav-item").forEach((button) => {
+  
+  function formatBytes(value) {
+    const bytes = Number(value) || 0;
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KiB";
+    if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MiB";
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + " GiB";
+  }
+
+  function fillSettingsForm(settings) {
+    const fields = {
+      "preheat-enabled":"preheat_enabled",
+      "preheat-startup":"preheat_on_startup",
+      "preheat-hourly":"preheat_hourly",
+      "preheat-items":"preheat_items",
+      "idle-seconds":"idle_seconds",
+      "image-ram-mib":"image_ram_mib",
+      "image-disk-gib":"image_disk_gib",
+      "image-ram-idle-hours":"image_ram_idle_hours",
+      "image-disk-retention-days":"image_disk_retention_days",
+      "api-ram-mib":"api_ram_mib",
+      "api-max-entries":"api_max_entries"
+    };
+    Object.keys(fields).forEach((id) => {
+      const input = $("#" + id);
+      if (!input) return;
+      const key = fields[id];
+      if (input.type === "checkbox") input.checked = !!settings[key];
+      else input.value = settings[key];
+    });
+  }
+
+  function readSettingsForm() {
+    return {
+      preheat_enabled:$("#preheat-enabled").checked,
+      preheat_on_startup:$("#preheat-startup").checked,
+      preheat_hourly:$("#preheat-hourly").checked,
+      preheat_items:Number($("#preheat-items").value),
+      idle_seconds:Number($("#idle-seconds").value),
+      image_ram_mib:Number($("#image-ram-mib").value),
+      image_disk_gib:Number($("#image-disk-gib").value),
+      image_ram_idle_hours:Number($("#image-ram-idle-hours").value),
+      image_disk_retention_days:Number($("#image-disk-retention-days").value),
+      api_ram_mib:Number($("#api-ram-mib").value),
+      api_max_entries:Number($("#api-max-entries").value)
+    };
+  }
+
+  function renderSettingsLive(data) {
+    const status = data.preheat || {};
+    const cache = data.cache || {};
+    const started = status.started_at ? new Date(status.started_at).toLocaleString() : "尚未运行";
+    const next = status.next_run_at ? new Date(status.next_run_at).toLocaleString() : "等待调度";
+    const preheatText = [
+      "预热状态：" + (status.running ? "运行中 · " + (status.phase || "") + (status.current ? " · " + status.current : "") : (status.phase || "空闲")),
+      "目录 API：" + (status.api_pages || 0) + " 页 · 作品条目 " + (status.items_ready || 0),
+      "封面：" + (status.images_done || 0) + " / " + (status.images_total || 0) + " · 失败 " + (status.images_failed || 0),
+      "API 失败/超时：" + (status.api_failed || 0) + " · 跳过轮次：" + (status.skipped || 0),
+      "上次开始：" + started,
+      "下次计划：" + next,
+      "结果：" + (status.last_result || "等待首次预热"),
+      "",
+      "图片 RAM：" + formatBytes(cache.image_ram_bytes) + " / " + formatBytes(cache.image_ram_limit_bytes) + " · " + (cache.image_ram_entries || 0) + " 张",
+      "图片闪存：" + formatBytes(cache.image_disk_bytes) + " / " + formatBytes(cache.image_disk_limit_bytes) + " · " + (cache.image_disk_entries || 0) + " 张",
+      "API RAM：" + formatBytes(cache.api_bytes) + " · " + (cache.api_entries || 0) + " 条"
+    ];
+    $("#settings-live").textContent = preheatText.join("\n");
+  }
+
+  async function refreshSettings(fillForm) {
+    const data = await request("/api/v1/settings");
+    if (fillForm) fillSettingsForm(data.settings || {});
+    renderSettingsLive(data);
+  }
+
+  async function openSettings() {
+    const dialog = $("#settings-dialog");
+    if (!dialog.open) dialog.showModal();
+    $("#settings-live").textContent = "正在读取缓存状态…";
+    try {
+      await refreshSettings(true);
+      window.clearInterval(settingsRefreshTimer);
+      settingsRefreshTimer = window.setInterval(() => {
+        if (dialog.open) refreshSettings(false).catch(() => {});
+      }, 5000);
+    } catch (error) {
+      $("#settings-live").textContent = error.message || "读取设置失败";
+    }
+  }
+
+  document.querySelectorAll(".nav-item").forEach((button) => {
       button.classList.toggle("active", button.dataset.view === view);
     });
     $("#welcome").hidden = view !== "discover";
@@ -499,6 +615,7 @@
     if (isNearPageEnd()) loadView(state.view, true);
   }
   function stopPlayback() {
+    setPlaybackActivity(false);
     const video = $("#web-player");
     if (!video) return;
     video.pause();
@@ -656,6 +773,10 @@
         startPlayback(state.playback.index, $("#player-quality").value, position);
       });
       const video = $("#web-player");
+      video.addEventListener("playing", () => setPlaybackActivity(true));
+      video.addEventListener("pause", () => setPlaybackActivity(false));
+      video.addEventListener("ended", () => setPlaybackActivity(false));
+      video.addEventListener("error", () => setPlaybackActivity(false));
       video.addEventListener("ended", () => {
         if (state.playback.index >= 0) {
           const next = findPlayableEpisode(state.playback.index, 1);
@@ -955,6 +1076,44 @@
     if (event.target === $("#detail-dialog")) $("#detail-dialog").close();
   });
   $("#cast-dialog-close").addEventListener("click", () => $("#cast-dialog").close());
+  $("#settings-button").addEventListener("click", openSettings);
+  $("#settings-close").addEventListener("click", () => {
+    $("#settings-dialog").close();
+    window.clearInterval(settingsRefreshTimer);
+  });
+  $("#settings-dialog").addEventListener("close", () => window.clearInterval(settingsRefreshTimer));
+  $("#settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = $("#settings-form button[type='submit']");
+    submit.disabled = true;
+    try {
+      await request("/api/v1/settings", {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(readSettingsForm())
+      });
+      await refreshSettings(true);
+      showToast("设置已保存并立即生效");
+    } catch (error) {
+      showToast(error.message || "保存设置失败");
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  $("#preheat-now").addEventListener("click", async () => {
+    const button = $("#preheat-now");
+    button.disabled = true;
+    try {
+      await request("/api/v1/preheat/run", {method:"POST"});
+      showToast("已提交立即预热任务");
+      await refreshSettings();
+    } catch (error) {
+      showToast(error.message || "启动预热失败");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  window.addEventListener("pagehide", () => setPlaybackActivity(false));
 
   loadView("discover", false);
 })();

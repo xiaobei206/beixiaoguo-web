@@ -212,6 +212,7 @@ const webFullscreenClick = listeners.get("#player-web-fullscreen")?.get("click")
 assert.equal(typeof webFullscreenClick, "function", "The player must expose a separate web fullscreen control");
 webFullscreenClick();
 assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), true, "Web fullscreen must use the CSS layout instead of the Fullscreen API");
+assert.equal(getElement("#playback-panel .player-nav").hidden, true, "Entering web fullscreen must hide episode navigation in the DOM");
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), true, "The detail dialog must expand to the viewport");
 assert.equal(getElement("#player-web-fullscreen").textContent, "退出网页全屏", "The web fullscreen control must offer an exit action");
 let cancelPrevented = false;
@@ -220,6 +221,7 @@ assert.equal(typeof cancelFullscreen, "function", "Escape handling must be bound
 cancelFullscreen({ preventDefault() { cancelPrevented = true; } });
 assert.equal(cancelPrevented, true, "Escape should exit web fullscreen without closing the series dialog");
 assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), false, "Escape must remove the web fullscreen panel class");
+assert.equal(getElement("#playback-panel .player-nav").hidden, false, "Exiting web fullscreen must restore episode navigation");
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Escape must restore the normal detail dialog");
 webFullscreenClick();
 assert.equal(getElement("#playback-panel").classList.contains("web-fullscreen"), true, "Web fullscreen can be entered repeatedly");
@@ -227,7 +229,9 @@ webFullscreenClick();
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Web fullscreen can be exited with its button");
 assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must expand the detail dialog to viewport size");
 assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
-assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav\s*\{\s*display:\s*none;/, "Web fullscreen must hide previous/next episode buttons to maximize the video stage");
+assert.match(cssSource, /\.player-nav\[hidden\]\s*\{\s*display:\s*none\s*!important;/, "Hidden episode navigation must not render even if styles conflict");
+assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav[^\{]*\{\s*display:\s*none\s*!important;/, "Web fullscreen must force-hide previous/next episode buttons");
+assert.match(source, /app\.css\?v=0\.1\.24|app\.js\?v=0\.1\.24/, "The page template must cache-bust updated frontend assets");
 const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");
 assert.equal(typeof episodeGridClick, "function", "The series detail must expose episode selection");
 episodeGridClick({

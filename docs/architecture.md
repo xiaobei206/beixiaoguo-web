@@ -94,6 +94,7 @@ N1 默认监听 \`0.0.0.0:8780\`，通过 \`BEIXIAOGUO_ADDR\` 修改。可执行
 - 图片源只允许公开 HTTP/HTTPS 的 80/443 端口，解析 DNS 后拒绝私网、回环、链路本地和共享地址；最多跟随 5 次逐跳校验的 CDN 重定向，拒绝 HTTPS 降级。
 - 图片单张上限 8 MiB。N1 RAM 图片热缓存上限 224 MiB，12 小时未刷新则尝试回源；按最近使用淘汰。内存中仍有旧图时，CDN 失败会返回旧图，避免卡片封面空白。
 - 图片持久缓存上限 1 GiB，最长保留 30 天，按 LRU 淘汰；文件以图片源路径哈希命名，原子写入，服务重启后仍可命中。仅成功回源的新图片产生磁盘写入；缓存命中不会刷新文件时间戳，减少 TF 卡写操作。默认目录 `/opt/beixiaoguo/cache/images` 可通过 `BEIXIAOGUO_IMAGE_CACHE_DIR` 改到外接 SSD/USB 存储；不预分配 1 GiB。
+- 图片读取顺序为 RAM → 磁盘 → CDN：12 小时 RAM 热缓存到期后优先读取 30 天持久缓存；只有磁盘未命中或文件损坏才访问 CDN。磁盘命中只更新进程内的 LRU 时间，不触发文件改写。
 - 对 `fqnovelpic.com` / `byteimg.com` 的 `/novel-pic/` HEIC 封面，优先尝试官方 `p3-novel.byteimg.com` JPEG 变体；仅在 JPEG 文件头校验成功后缓存为 `image/jpeg`，变体请求失败或返回其他格式时记录脱敏诊断并回退原始图片。普通图片不转换，也不引入 FFmpeg。
 - 列表/搜索/榜单/详情 API 的结果按 operation 做 RAM TTL 缓存，最多 256 项、32 MiB；发现/榜单/新剧 10 分钟、搜索 5 分钟、详情/季 30 分钟、分集 20 分钟；播放解析和媒体字节不缓存。
 - 浏览器图片响应使用 7 天 HTTP 缓存，并声明 stale-while-revalidate / stale-if-error；浏览器可复用本机缓存，N1 的磁盘缓存则跨设备、跨服务重启复用。

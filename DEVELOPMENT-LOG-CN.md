@@ -1,3 +1,15 @@
+## 0.1.21 — 2026-11-25
+
+### iOS 锁屏媒体信息与原生控制
+- 接入浏览器 Media Session API，使用当前短剧的 N1 代理封面、短剧名称和当前集数创建 MediaMetadata；锁屏不再只显示通用网页标题。
+- 注册 play / pause / stop、上一集 / 下一集和 seekto / seekbackward / seekforward 操作，均控制同一个 HTMLVideoElement 或现有分集切换流程。
+- 播放、暂停、倍速、时间更新、跳转和媒体元数据加载时同步 Media Session 播放状态与进度。
+- 切集立即更新标题/集数/封面；关闭详情或停止播放器时清理 metadata、playbackState 和 positionState，避免锁屏显示过期剧集。
+- 新增 UI 冒烟测试，覆盖锁屏元数据、N1 封面地址、媒体操作、进度同步、切集更新和清理。
+- 自动化测试通过不替代真实 iPhone/iPad 锁屏验收；独立网页 App 的后台媒体控制仍受 iOS/WebKit 运行模式限制。
+
+---
+
 ## 0.1.20 — 2026-11-25
 
 ### iOS 画中画入口与倍速状态同步

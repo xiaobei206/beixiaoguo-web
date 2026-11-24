@@ -273,7 +273,7 @@ main { min-height:65vh; }
 #playback-panel.web-fullscreen #web-player {
   width:100%; height:100%; max-height:none; aspect-ratio:auto; border-radius:0; object-fit:contain;
 }
-#playback-panel.web-fullscreen .player-nav { flex:0 0 auto; padding-top:6px; }
+#playback-panel.web-fullscreen .player-nav { display:none; }
 #playback-panel.web-fullscreen .playback-status { flex:0 0 auto; max-height:2.7em; overflow:hidden; padding-top:5px; }
 #playback-panel.web-fullscreen #web-player::-webkit-media-controls-fullscreen-button { display:none; }
 @media (orientation:landscape) and (max-height:500px) {

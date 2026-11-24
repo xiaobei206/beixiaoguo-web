@@ -2,9 +2,17 @@
 
 面向家庭局域网的短剧 Web 客户端。后端使用 Go，前端使用原生 TypeScript/JavaScript、HTML 与 CSS；构建后由一个 Go 可执行文件提供网页和 API。
 
-> 当前版本：**0.1.10**
+> 当前版本：**0.1.12**
 >
 > 本项目是非官方个人项目，与红果短剧及其运营方无关联。请遵守内容平台的服务条款与适用法律，仅访问有权访问的内容。
+
+## 0.1.12
+
+- 图片缓存扩容为 224 MiB RAM 热缓存 + 最多 1 GiB 持久磁盘缓存；磁盘缓存按 LRU 自动淘汰，服务重启后仍可复用，未预分配空间。
+- 图片下载改为 8 路并发、最多 64 个排队请求；同一图片合并下载，CDN 暂时失败时优先返回已有缓存封面。
+- 片库 API 保持 4 路上游并发，并将等待队列限制为 24 个；队列满时前端按 Retry-After 自动重试一次，避免请求无限堆积。
+- API RAM 缓存扩至 32 MiB，按业务类型延长短时缓存；health 接口增加 RAM/磁盘缓存与队列占用指标。
+- N1 持久图片缓存默认目录为 `/opt/beixiaoguo/cache/images`，最多占用 1 GiB；实际占用随访问增长，空间不足时保留 RAM 缓存并记录诊断。
 
 ## 0.1.10
 
@@ -71,13 +79,13 @@
 - 复用 [openhongguo Go SDK](https://github.com/xiaobei206/openhongguo) 的目录、搜索、榜单、剧集和播放模型接口。
 - 面向 N1 / iStoreOS / ARM64，以单一静态 Go 二进制部署。
 - 静态网页通过 `embed.FS` 嵌入程序，不需要 Node.js 运行时或数据库。
-- SDK 匿名设备档案、目录缓存、封面缓存、媒体会话均在进程内存；默认不写 TF 卡。
+- SDK 匿名设备档案、目录缓存和媒体会话在进程内存；封面缓存采用 RAM + 持久磁盘两层。磁盘图片缓存可通过环境变量改到外接存储，默认目录在 /opt 下。
 - 播放链路已接入 CENC AES-CTR 按需解密与 HTTP Range 转发，不做整片下载、不做 N1 视频转码。
 - 电视接力由 N1 服务端处理 mDNS 和 TCP，浏览器只访问同源 HTTP API。
 
 ## N1 / iStoreOS 安装与更新
 
-推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版并校验 SHA-256，将程序安装到持久化的 `/usr/bin/beixiaoguo`，再注册 `/etc/init.d/beixiaoguo` 开机服务和健康检查守护。只有安装/升级时才写入持久化存储；运行日志由 OpenWrt RAM 日志系统保存，不持续写 TF 卡：
+推荐使用仓库内的一键更新脚本。脚本从 GitHub Releases 下载与设备架构匹配的正式版并校验 SHA-256，将程序安装到持久化的 `/usr/bin/beixiaoguo`，再注册 `/etc/init.d/beixiaoguo` 开机服务和健康检查守护。程序日志由 OpenWrt RAM 日志系统保存；图片首次下载成功时会写入持久缓存，后续命中只读。默认图片缓存路径为 /opt/beixiaoguo/cache/images，最多 1 GiB，不会预分配；需要避开 TF 卡时，可把该目录改到已挂载的 USB/SSD 存储：
 
 ```sh
 wget -qO /tmp/beixiaoguo-install.sh https://raw.githubusercontent.com/xiaobei206/beixiaoguo-web/main/scripts/install-n1.sh && sh /tmp/beixiaoguo-install.sh
@@ -102,12 +110,13 @@ make build-arm64
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `BEIXIAOGUO_ADDR` | `0.0.0.0:8780` | HTTP 监听地址 |
+| `BEIXIAOGUO_IMAGE_CACHE_DIR` | `/opt/beixiaoguo/cache/images`（N1 服务） | 持久图片缓存目录；留空则只使用 RAM 缓存 |
 
 ## API
 
 播放 API：`GET /api/v1/play/{episodeID}?quality=720p` 返回同源媒体地址；浏览器随后使用 `GET /api/v1/media/{token}` 和标准 `Range` 请求播放。令牌、上游 URL 与 CENC 密钥仅保存在服务端内存。
 
-封面代理：目录 API 的 `cover_url` / `avatar_url` 等字段会被改写为 `/api/v1/images/{token}`。N1 最多缓存约 96 MiB 图片到 RAM，缓存 12 小时；浏览器获得 12 小时 HTTP 缓存。目录 API 响应也在 N1 内按操作类型做有限 TTL 缓存。
+封面代理：目录 API 的 `cover_url` / `avatar_url` 等字段会被改写为 `/api/v1/images/{token}`。N1 图片 RAM 缓存上限 224 MiB，缓存 12 小时；持久图片缓存上限 1 GiB，最长保留 30 天，按 LRU 淘汰；浏览器可缓存封面 7 天并允许离线使用旧图。目录 API RAM 缓存上限 32 MiB。health 接口返回缓存占用和队列深度。
 
 ## 文档
 

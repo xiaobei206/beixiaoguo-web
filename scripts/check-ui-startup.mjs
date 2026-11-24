@@ -86,7 +86,8 @@ vm.runInNewContext(source, {
   window,
   localStorage,
   fetch,
-  AbortController
+  AbortController,
+  URLSearchParams
 });
 
 await new Promise((resolve) => setImmediate(resolve));

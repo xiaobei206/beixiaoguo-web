@@ -344,3 +344,40 @@ func TestServeHTTPFallsBackToStaleRAMImageOnCDNError(t *testing.T) {
 		t.Fatalf("stale response status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
+
+
+func TestServeHTTPPromotesPersistentImageBeforeCDNRefresh(t *testing.T) {
+	p := New()
+	p.validate = func(*url.URL) error { return nil }
+	disk, err := newDiskCache(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.disk = disk
+	tokenURL := p.Register("https://cdn.example/poster.jpg")
+	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
+	item := p.byToken[token]
+
+	stale := []byte("old-ram-image")
+	p.cacheRAM(item, stale, "image/jpeg")
+	p.mu.Lock()
+	item.cachedAt = time.Now().Add(-cacheLifetime - time.Minute)
+	p.mu.Unlock()
+
+	persistent := []byte("disk-cached-image")
+	if err := disk.store(item.sourceKey, "image/jpeg", persistent); err != nil {
+		t.Fatal(err)
+	}
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("CDN should not be contacted while the persistent image is valid")
+		return nil, errors.New("unexpected CDN request")
+	})}
+
+	req := httptest.NewRequest(http.MethodGet, tokenURL, nil)
+	req.SetPathValue("token", token)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != string(persistent) {
+		t.Fatalf("persistent cache response status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}

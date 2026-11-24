@@ -444,7 +444,7 @@ func hasJPEGSignature(body []byte) bool {
 
 func (p *Proxy) cacheRAM(item *entry, body []byte, contentType string) string {
 	sum := sha256.Sum256(body)
-	etag := """ + hex.EncodeToString(sum[:]) + """
+	etag := "\"" + hex.EncodeToString(sum[:]) + "\""
 
 	p.mu.Lock()
 	delta := int64(len(body)) - int64(len(item.body))

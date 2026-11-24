@@ -31,7 +31,7 @@ function getElement(selector) {
       if (!listeners.has(selector)) listeners.set(selector, new Map());
       listeners.get(selector).set(type, handler);
     },
-    querySelector() { return null; },
+    querySelector(selector) { return getElement(this.selector + " " + selector); },
     querySelectorAll() { return []; },
     showModal() { this.open = true; },
     close() { this.open = false; },
@@ -70,9 +70,17 @@ const localStorage = {
 async function fetch(path) {
   const url = String(path);
   requests.push(url);
-  const payload = url === "/api/v1/settings"
-    ? { settings: {}, cache: {}, preheat: {} }
-    : { items: [], cursor: "", has_more: false };
+  let payload;
+  if (url === "/api/v1/settings") {
+    payload = { settings: {}, cache: {}, preheat: {} };
+  } else if (/^\/api\/v1\/series\/[^/]+\/detail$/.test(url)) {
+    payload = {
+      series: { id: "7100000000000101", title: "Startup Smoke Series" },
+      episodes: [{ id: "7100000000000201", number: 1, playable: true }]
+    };
+  } else {
+    payload = { items: [], cursor: "", has_more: false };
+  }
   return {
     ok: true,
     status: 200,
@@ -101,4 +109,23 @@ assert.equal(typeof settingsClick, "function", "The settings button must have a 
 await settingsClick();
 assert.equal(getElement("#settings-dialog").open, true, "The settings dialog must open");
 assert.ok(requests.includes("/api/v1/settings"), "Opening settings must request the runtime settings");
-console.log("UI startup smoke test passed: initial list loads and settings dialog opens.");
+
+const beforeDetail = requests.length;
+const gridClick = listeners.get("#series-grid")?.get("click");
+assert.equal(typeof gridClick, "function", "Series grid must have a detail click handler");
+gridClick({
+  target: {
+    closest(selector) {
+      return selector === ".series-card"
+        ? { dataset: { id: "7100000000000101" } }
+        : null;
+    }
+  }
+});
+await new Promise((resolve) => setImmediate(resolve));
+await new Promise((resolve) => setImmediate(resolve));
+const detailRequests = requests.slice(beforeDetail).filter((url) => url.includes("/api/v1/series/7100000000000101"));
+assert.equal(detailRequests.length, 1, "Opening a series must make a single combined detail request");
+assert.ok(detailRequests[0].endsWith("/detail"), "Series detail must use the combined endpoint");
+assert.ok(!detailRequests.some((url) => url.endsWith("/episodes")), "Series detail must not duplicate the upstream request for episodes");
+console.log("UI smoke test passed: initial list loads, settings opens, and detail uses one combined request.");

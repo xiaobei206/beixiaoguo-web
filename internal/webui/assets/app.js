@@ -5,6 +5,7 @@
   const INITIAL_PRELOAD_TARGET = 100;
   const playbackClientId = "bxg-web-" + (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2));
   let playbackHeartbeatTimer = 0;
+  let playerControlsTimer = 0;
   let settingsRefreshTimer = 0;
   let deferredInstallPrompt = null;
   function todayDateKey() {
@@ -1021,6 +1022,24 @@
     clearMediaSession();
   }
 
+  function clearFullscreenPlayerControlsTimer() {
+    if (playerControlsTimer) window.clearTimeout(playerControlsTimer);
+    playerControlsTimer = 0;
+  }
+
+  function showFullscreenPlayerControls(delay) {
+    const panel = $("#playback-panel");
+    if (!panel || !panel.classList.contains("web-fullscreen")) return;
+    panel.classList.add("player-controls-visible");
+    clearFullscreenPlayerControlsTimer();
+    playerControlsTimer = window.setTimeout(() => {
+      playerControlsTimer = 0;
+      if (panel.classList.contains("web-fullscreen")) {
+        panel.classList.remove("player-controls-visible");
+      }
+    }, delay == null ? 3500 : delay);
+  }
+
   function setPlayerWebFullscreen(enabled) {
     const panel = $("#playback-panel");
     const dialog = $("#detail-dialog");
@@ -1028,6 +1047,9 @@
     const closeButton = $("#player-close");
     const episodeNav = panel ? panel.querySelector(".player-nav") : null;
     if (!panel || !dialog || !button) return;
+
+    clearFullscreenPlayerControlsTimer();
+    panel.classList.remove("player-controls-visible");
 
     // Set the DOM hidden flag too: stale/overridden CSS must not keep the
     // episode buttons visible or reserve space in web fullscreen.
@@ -1272,6 +1294,10 @@
       let touchBoosted = false;
       let holdTimer = 0;
       const stage = $("#player-stage");
+      const toolbar = $("#playback-panel .player-toolbar");
+      stage.addEventListener("click", () => showFullscreenPlayerControls());
+      toolbar.addEventListener("pointerdown", () => showFullscreenPlayerControls(5000));
+      toolbar.addEventListener("focusin", () => showFullscreenPlayerControls(8000));
       stage.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
         const touch = event.touches[0];
@@ -1304,6 +1330,10 @@
         touchBoosted = false;
         if (wasBoosted) {
           endTemporaryBoost();
+          return;
+        }
+        if (!touchMoved) {
+          showFullscreenPlayerControls();
           return;
         }
         if (Math.abs(dy) < 55 || Math.abs(dy) < Math.abs(dx) * 1.25) return;

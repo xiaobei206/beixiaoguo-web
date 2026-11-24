@@ -27,7 +27,7 @@ func TestCacheTTLByOperation(t *testing.T) {
 	if cacheTTL("search")!=6*time.Hour {t.Fatal("search TTL changed")}
 	if cacheTTL("hot-search")!=30*time.Minute {t.Fatal("hot-search TTL changed")}
 	if cacheTTL("series")!=24*time.Hour {t.Fatal("series TTL changed")}
-	if cacheTTL("seasons")!=24*time.Hour {t.Fatal("seasons TTL changed")}
+\tif cacheTTL("series-detail")!=24*time.Hour {t.Fatal("combined series-detail TTL changed")}\n	if cacheTTL("seasons")!=24*time.Hour {t.Fatal("seasons TTL changed")}
 	if cacheTTL("episodes")!=12*time.Hour {t.Fatal("episodes TTL changed")}
 	if cacheTTL("suggest")!=24*time.Hour {t.Fatal("suggest TTL changed")}
 	if cacheTTL("play")!=0 {t.Fatal("playback must not be cached")}

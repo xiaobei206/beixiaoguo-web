@@ -20,9 +20,11 @@ func TestAPICacheStoresExpiresAndEvicts(t *testing.T) {
 }
 
 func TestCacheTTLByOperation(t *testing.T) {
-	if cacheTTL("discover")!=3*time.Minute {t.Fatal("discover TTL changed")}
-	if cacheTTL("series")!=20*time.Minute {t.Fatal("series TTL changed")}
-	if cacheTTL("seasons")!=20*time.Minute {t.Fatal("seasons TTL changed")}
+	if cacheTTL("discover")!=10*time.Minute {t.Fatal("discover TTL changed")}
+	if cacheTTL("search")!=5*time.Minute {t.Fatal("search TTL changed")}
+	if cacheTTL("series")!=30*time.Minute {t.Fatal("series TTL changed")}
+	if cacheTTL("seasons")!=30*time.Minute {t.Fatal("seasons TTL changed")}
+	if cacheTTL("episodes")!=20*time.Minute {t.Fatal("episodes TTL changed")}
 	if cacheTTL("play")!=0 {t.Fatal("playback must not be cached")}
 }
 
@@ -94,5 +96,24 @@ func TestAcquireRequestSlotSucceedsImmediately(t *testing.T) {
 	}
 	if len(slots) != 1 {
 		t.Fatal("slot token was not recorded")
+	}
+}
+
+func TestAcquireRequestQueueIsBounded(t *testing.T) {
+	queue := make(chan struct{}, 1)
+	if !acquireRequestQueue(context.Background(), queue) {
+		t.Fatal("first request was not admitted")
+	}
+	if acquireRequestQueue(context.Background(), queue) {
+		t.Fatal("queue admitted a request beyond its capacity")
+	}
+	if len(queue) != 1 {
+		t.Fatalf("queued=%d, want 1", len(queue))
+	}
+	<-queue
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if acquireRequestQueue(ctx, queue) {
+		t.Fatal("cancelled request entered the queue")
 	}
 }

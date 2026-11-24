@@ -23,8 +23,9 @@ var version = "0.1.12"
 func main() {
 	logger := log.New(os.Stdout, "[beixiaoguo] ", log.LstdFlags|log.Lmicroseconds)
 
-	// Keep the anonymous SDK profile in RAM. No profile, database, cache or
-	// application log is written to the N1 flash storage by default.
+	// Keep the anonymous SDK profile and transient runtime state in RAM. The
+	// N1 procd service separately enables an evictable persistent image cache,
+	// which can be redirected to external storage through its environment.
 	client, err := adapters.NewClient("", sdk.Options{
 		ProfileStore:  memstore.New(),
 		RetryAttempts: 2,

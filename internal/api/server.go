@@ -131,10 +131,13 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"cache": map[string]any{
 			"api_entries": apiEntries,
 			"api_bytes": apiBytes,
+			"api_limit_bytes": apiCacheMaxBytes,
 			"image_ram_entries": imageStats.RAMEntries,
 			"image_ram_bytes": imageStats.RAMBytes,
+			"image_ram_limit_bytes": imageStats.RAMLimitBytes,
 			"image_disk_entries": imageStats.DiskEntries,
 			"image_disk_bytes": imageStats.DiskBytes,
+			"image_disk_limit_bytes": imageStats.DiskLimitBytes,
 		},
 		"upstream_queue": map[string]any{
 			"active": len(s.slots),
@@ -361,7 +364,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		id, _ := r.Context().Value(requestIDKey).(string)
 		w.Header().Set("Retry-After", "2")
 		s.logger.Printf("upstream queue full request_id=%s operation=%s", id, operation)
-		writeError(w, http.StatusServiceUnavailable, "REQUEST_QUEUE_FULL", "片库请求较多，已进入保护队列，请稍后自动重试", id)
+		writeError(w, http.StatusServiceUnavailable, "REQUEST_QUEUE_FULL", "片库请求较多，触发了保护限流，稍后会自动重试", id)
 		return
 	}
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -63,5 +64,35 @@ func TestSearchFiltersForType(t *testing.T) {
 				t.Fatalf("got %v, want [%s]", got, test.want)
 			}
 		})
+	}
+}
+
+
+func TestAcquireRequestSlotHonorsDeadline(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	if acquireRequestSlot(ctx, slots) {
+		t.Fatal("acquired a busy slot after the context deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("slot wait exceeded context deadline: %s", elapsed)
+	}
+	if len(slots) != 1 {
+		t.Fatal("timed-out waiter modified the occupied slot")
+	}
+}
+
+func TestAcquireRequestSlotSucceedsImmediately(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	if !acquireRequestSlot(context.Background(), slots) {
+		t.Fatal("available slot was not acquired")
+	}
+	if len(slots) != 1 {
+		t.Fatal("slot token was not recorded")
 	}
 }

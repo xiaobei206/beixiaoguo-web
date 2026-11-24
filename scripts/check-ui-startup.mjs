@@ -227,6 +227,7 @@ webFullscreenClick();
 assert.equal(getElement("#detail-dialog").classList.contains("player-web-fullscreen"), false, "Web fullscreen can be exited with its button");
 assert.match(cssSource, /#detail-dialog\.player-web-fullscreen/, "Styles must expand the detail dialog to viewport size");
 assert.match(cssSource, /#playback-panel\.web-fullscreen/, "Styles must lay out the controls in web fullscreen");
+assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav\s*\{\s*display:\s*none;/, "Web fullscreen must hide previous/next episode buttons to maximize the video stage");
 const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");
 assert.equal(typeof episodeGridClick, "function", "The series detail must expose episode selection");
 episodeGridClick({

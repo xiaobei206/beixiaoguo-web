@@ -24,6 +24,7 @@
     newDates: [],
     favorites: loadFavorites(),
     toastTimer: 0,
+    listController: null,
     viewCache: Object.create(null),
     activeViewKey: "",
     loadSequence: 0,
@@ -323,6 +324,15 @@
 
   async function loadView(view, append, force) {
     if (append && state.busy) return;
+    let listController = state.listController;
+    if (!append) {
+      if (listController) listController.abort();
+      listController = new AbortController();
+      state.listController = listController;
+    } else if (!listController) {
+      listController = new AbortController();
+      state.listController = listController;
+    }
     if (!append) {
       const key = viewCacheKey(view);
       if (state.activeViewKey && state.activeViewKey !== key && state.view !== view) saveActiveView();
@@ -375,7 +385,7 @@
         params.set("channel", state.discoverChannel || "推荐");
         if (append && state.cursor) params.set("cursor", state.cursor);
         endpoint = "/api/v1/discover?" + params.toString();
-        data = await request(endpoint);
+        data = await request(endpoint, {signal:listController.signal});
         items = data.items || [];
       } else if (view === "search") {
         const params = new URLSearchParams();
@@ -383,14 +393,14 @@
         if (append && state.cursor) params.set("cursor", state.cursor);
         if (state.searchType && state.searchType !== "all") params.set("type", state.searchType);
         endpoint = "/api/v1/search?" + params.toString();
-        data = await request(endpoint);
+        data = await request(endpoint, {signal:listController.signal});
         items = data.items || [];
       } else if (view === "new") {
         const params = new URLSearchParams();
         params.set("date", state.newDate || todayDateKey());
         if (append && state.cursor) params.set("cursor", state.cursor);
         endpoint = "/api/v1/new-releases?" + params.toString();
-        data = await request(endpoint);
+        data = await request(endpoint, {signal:listController.signal});
         items = data.items || [];
       } else if (view === "rank") {
         const params = new URLSearchParams();
@@ -398,10 +408,10 @@
         if (state.rankBoard) params.set("board", state.rankBoard);
         if (append && state.cursor) params.set("cursor", state.cursor);
         endpoint = "/api/v1/rank" + (params.toString() ? "?" + params.toString() : "");
-        data = await request(endpoint);
+        data = await request(endpoint, {signal:listController.signal});
         items = data.items || [];
       } else if (view === "hot") {
-        data = await request("/api/v1/hot-search");
+        data = await request("/api/v1/hot-search", {signal:listController.signal});
         const boards = (data.boards || []).flatMap((board) => board.items || []);
         items = (data.guesses || []).concat(boards);
       }
@@ -448,6 +458,7 @@
       loadSucceeded = true;
     } catch (error) {
       if (loadID !== state.loadSequence || activeKey !== state.activeViewKey) return;
+      if (error && error.name === "AbortError") return;
       setStatus(error.message || "加载失败", true);
       if (!append) $("#series-grid").innerHTML = '<div class="empty-state">片库暂时没有响应。<br>请检查 N1 网络后点击刷新。</div>';
     } finally {

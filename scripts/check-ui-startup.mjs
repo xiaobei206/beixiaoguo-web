@@ -175,7 +175,7 @@ await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
 const holdDown = listeners.get("#player-hold-speed")?.get("pointerdown");
 const holdUp = listeners.get("#player-hold-speed")?.get("pointerup");
-assert.equal(holdDown, undefined, "The player video toolbar should not add a visually intrusive hold-to-boost button");
+assert.doesNotMatch(source, /id="player-hold-speed"/, "The player video toolbar should not add a visually intrusive hold-to-boost button");
 assert.match(source, /stage\.addEventListener\("touchstart"/, "The video stage must listen for swipe gestures");
 assert.match(source, /changeEpisode\(dy < 0 \? 1 : -1\)/, "Vertical swipes must change episodes");
 assert.doesNotMatch(source, /if \(touchMoved \|\| Math\.abs\(dy\) < 55/, "Movement that cancels long-press must not also cancel swipe-to-change-episode");

@@ -1026,7 +1026,12 @@
     const dialog = $("#detail-dialog");
     const button = $("#player-web-fullscreen");
     const closeButton = $("#player-close");
+    const episodeNav = panel ? panel.querySelector(".player-nav") : null;
     if (!panel || !dialog || !button) return;
+
+    // Set the DOM hidden flag too: stale/overridden CSS must not keep the
+    // episode buttons visible or reserve space in web fullscreen.
+    if (episodeNav) episodeNav.hidden = Boolean(enabled);
 
     if (enabled) {
       if (document.fullscreenElement === panel && document.exitFullscreen) {

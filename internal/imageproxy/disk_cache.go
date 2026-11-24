@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"sync"
 	"time"
 )
@@ -13,6 +14,7 @@ import (
 const (
 	diskCacheMagic    = "BXGIMG1\n"
 	diskCacheLifetime = 30 * 24 * time.Hour
+	minDiskFreeBytes  = int64(128 << 20)
 )
 
 type diskFile struct {
@@ -162,6 +164,14 @@ func (c *diskCache) store(key, contentType string, body []byte) error {
 	data.Write(body)
 	if int64(data.Len()) > c.maxBytes {
 		return nil
+	}
+
+	var filesystem syscall.Statfs_t
+	if err := syscall.Statfs(c.dir, &filesystem); err == nil {
+		available := int64(filesystem.Bavail) * int64(filesystem.Bsize)
+		if available-int64(data.Len()) < minDiskFreeBytes {
+			return fmt.Errorf("image disk cache is preserving the final 128 MiB of free space")
+		}
 	}
 
 	temp, err := os.CreateTemp(c.dir, ".image-*.tmp")

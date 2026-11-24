@@ -21,9 +21,11 @@ import (
 )
 
 const (
-	apiCacheMaxEntries = 192
-	apiCacheMaxBytes   = 16 << 20
+	apiCacheMaxEntries = 256
+	apiCacheMaxBytes   = 32 << 20
 	apiRequestTimeout  = 25 * time.Second
+	apiUpstreamSlots   = 4
+	apiQueueCapacity   = 24
 )
 
 type cacheEntry struct {
@@ -40,6 +42,7 @@ type Server struct {
 	version string
 	logger  *log.Logger
 	slots   chan struct{}
+	queue   chan struct{}
 	seq     atomic.Uint64
 
 	cacheMu    sync.Mutex
@@ -62,7 +65,8 @@ func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 		tv:        tv.New(logger),
 		version:   version,
 		logger:    logger,
-		slots:     make(chan struct{}, 4),
+		slots:     make(chan struct{}, apiUpstreamSlots),
+		queue:     make(chan struct{}, apiQueueCapacity),
 		apiCache:  make(map[string]cacheEntry),
 	}
 
@@ -111,8 +115,37 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	s.cacheMu.Lock()
+	apiEntries, apiBytes := len(s.apiCache), s.cacheBytes
+	s.cacheMu.Unlock()
+
+	imageStats := imageproxy.CacheStats{}
+	if s.images != nil {
+		imageStats = s.images.Stats()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "name": "贝小果", "version": s.version, "runtime": "go",
+		"ok": true,
+		"name": "贝小果",
+		"version": s.version,
+		"runtime": "go",
+		"cache": map[string]any{
+			"api_entries": apiEntries,
+			"api_bytes": apiBytes,
+			"image_ram_entries": imageStats.RAMEntries,
+			"image_ram_bytes": imageStats.RAMBytes,
+			"image_disk_entries": imageStats.DiskEntries,
+			"image_disk_bytes": imageStats.DiskBytes,
+		},
+		"upstream_queue": map[string]any{
+			"active": len(s.slots),
+			"queued": len(s.queue),
+			"capacity": cap(s.queue),
+		},
+		"image_queue": map[string]any{
+			"active": imageStats.FetchActive,
+			"queued": imageStats.FetchQueued,
+			"capacity": imageStats.FetchQueueCapacity,
+		},
 	})
 }
 
@@ -281,6 +314,20 @@ func (s *Server) tvHandoff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func acquireRequestQueue(ctx context.Context, queue chan struct{}) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case queue <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+		return false
+	}
+}
+
 func acquireRequestSlot(ctx context.Context, slots chan struct{}) bool {
 	if ctx.Err() != nil {
 		return false
@@ -305,9 +352,23 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 	ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
 	defer cancel()
 
-	// Include semaphore wait time in the request deadline. Without this,
-	// obsolete page requests can queue for minutes before their timeout starts.
+	// Admit only a bounded number of waiters. Cancelled and obsolete browser
+	// requests leave the queue immediately instead of accumulating goroutines.
+	if !acquireRequestQueue(ctx, s.queue) {
+		if r.Context().Err() != nil {
+			return
+		}
+		id, _ := r.Context().Value(requestIDKey).(string)
+		w.Header().Set("Retry-After", "2")
+		s.logger.Printf("upstream queue full request_id=%s operation=%s", id, operation)
+		writeError(w, http.StatusServiceUnavailable, "REQUEST_QUEUE_FULL", "片库请求较多，已进入保护队列，请稍后自动重试", id)
+		return
+	}
+
+	// Include semaphore wait time in the request deadline. Queue admission is
+	// released as soon as a worker slot is acquired.
 	if !acquireRequestSlot(ctx, s.slots) {
+		<-s.queue
 		if r.Context().Err() != nil {
 			return
 		}
@@ -316,6 +377,7 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		writeError(w, http.StatusGatewayTimeout, "REQUEST_QUEUE_TIMEOUT", "目录请求排队超时，请稍后刷新重试", id)
 		return
 	}
+	<-s.queue
 	defer func() { <-s.slots }()
 
 	result, err := call(ctx)
@@ -352,17 +414,17 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 func cacheTTL(operation string) time.Duration {
 	switch operation {
 	case "discover", "rank", "short-rank", "new-releases":
-		return 3 * time.Minute
-	case "search":
-		return 90 * time.Second
-	case "hot-search":
-		return 60 * time.Second
-	case "series", "seasons":
-		return 20 * time.Minute
-	case "episodes":
 		return 10 * time.Minute
+	case "search":
+		return 5 * time.Minute
+	case "hot-search":
+		return 3 * time.Minute
+	case "series", "seasons":
+		return 30 * time.Minute
+	case "episodes":
+		return 20 * time.Minute
 	case "suggest":
-		return 30 * time.Second
+		return 2 * time.Minute
 	default:
 		return 0
 	}

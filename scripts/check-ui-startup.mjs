@@ -175,12 +175,11 @@ await new Promise((resolve) => setImmediate(resolve));
 await new Promise((resolve) => setImmediate(resolve));
 const holdDown = listeners.get("#player-hold-speed")?.get("pointerdown");
 const holdUp = listeners.get("#player-hold-speed")?.get("pointerup");
-assert.equal(typeof holdDown, "function", "The player must expose a hold-to-boost button");
-assert.equal(typeof holdUp, "function", "The hold-to-boost button must restore speed on release");
-holdDown({ type: "pointerdown", button: 0, pointerId: 7 });
-assert.equal(getElement("#web-player").playbackRate, 2, "Holding the boost button must temporarily set playbackRate to 2");
-holdUp();
-assert.equal(getElement("#web-player").playbackRate, 1, "Releasing the boost button must restore the configured playback rate");
+assert.equal(holdDown, undefined, "The player video toolbar should not add a visually intrusive hold-to-boost button");
+assert.match(source, /stage\.addEventListener\("touchstart"/, "The video stage must listen for swipe gestures");
+assert.match(source, /changeEpisode\(dy < 0 \? 1 : -1\)/, "Vertical swipes must change episodes");
+assert.doesNotMatch(source, /if \(touchMoved \|\| Math\.abs\(dy\) < 55/, "Movement that cancels long-press must not also cancel swipe-to-change-episode");
+assert.doesNotMatch(source, /上滑下一集|下滑上一集|临时 2× 倍速/, "The video should not show persistent gesture instructions or a temporary speed text overlay");
 
 const installClick = listeners.get("#install-app-button")?.get("click");
 assert.equal(typeof installClick, "function", "Home page must expose an install/add-to-home-screen action");
@@ -189,4 +188,4 @@ assert.equal(getElement("#install-dialog").open, true, "The install action must 
 assert.match(manifestSource, /"display": "standalone"/, "Manifest must request standalone app display");
 assert.match(manifestSource, /192x192/, "Manifest must include a 192px icon");
 assert.match(manifestSource, /512x512/, "Manifest must include a 512px icon");
-console.log("UI smoke test passed: startup, settings, details, web fullscreen, hold-to-boost restoration, installation guide, and PWA manifest.");
+console.log("UI smoke test passed: startup, settings, details, web fullscreen, swipe/hold gesture separation, unobtrusive playback UI, installation guide, and PWA manifest.");

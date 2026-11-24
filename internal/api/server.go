@@ -23,6 +23,7 @@ import (
 const (
 	apiCacheMaxEntries = 192
 	apiCacheMaxBytes   = 16 << 20
+	apiRequestTimeout  = 25 * time.Second
 )
 
 type cacheEntry struct {
@@ -280,6 +281,18 @@ func (s *Server) tvHandoff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func acquireRequestSlot(ctx context.Context, slots chan struct{}) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	select {
+	case slots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, call func(context.Context) (any, error)) {
 	cacheKey := operation + ":" + r.URL.RequestURI()
 	if ttl := cacheTTL(operation); ttl > 0 {
@@ -289,15 +302,21 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		}
 	}
 
-	select {
-	case s.slots <- struct{}{}:
-	case <-r.Context().Done():
+	ctx, cancel := context.WithTimeout(r.Context(), apiRequestTimeout)
+	defer cancel()
+
+	// Include semaphore wait time in the request deadline. Without this,
+	// obsolete page requests can queue for minutes before their timeout starts.
+	if !acquireRequestSlot(ctx, s.slots) {
+		if r.Context().Err() != nil {
+			return
+		}
+		id, _ := r.Context().Value(requestIDKey).(string)
+		s.logger.Printf("upstream queue timeout request_id=%s operation=%s", id, operation)
+		writeError(w, http.StatusGatewayTimeout, "REQUEST_QUEUE_TIMEOUT", "目录请求排队超时，请稍后刷新重试", id)
 		return
 	}
 	defer func() { <-s.slots }()
-
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
 
 	result, err := call(ctx)
 	if err != nil {

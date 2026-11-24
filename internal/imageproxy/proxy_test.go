@@ -1,6 +1,8 @@
 package imageproxy
 
 import (
+	"context"
+	"errors"
 	"encoding/json"
 	"io"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRewriteJSONReplacesCoverURLsWithStableSameOriginURLs(t *testing.T) {
@@ -52,6 +55,9 @@ func TestServeHTTPCachesAndRevalidatesFromRAM(t *testing.T) {
 		rec:=httptest.NewRecorder()
 		p.ServeHTTP(rec,req)
 		if rec.Code!=http.StatusOK || rec.Body.String()!="jpeg-test-content" {t.Fatalf("response %d: %s",rec.Code,rec.Body.String())}
+		if !strings.Contains(rec.Header().Get("Cache-Control"), "max-age=604800") {
+			t.Fatalf("image browser cache lifetime was not extended: %q", rec.Header().Get("Cache-Control"))
+		}
 	}
 	if calls!=1 {t.Fatalf("upstream calls=%d, want 1",calls)}
 }
@@ -276,5 +282,65 @@ func TestServeHTTPFallsBackWhenOfficialVariantIsNotJPEG(t *testing.T) {
 		!strings.Contains(requested[0], "p3-novel.byteimg.com") ||
 		!strings.Contains(requested[1], "p3-fqnovelpic.byteimg.com") {
 		t.Fatalf("expected variant then original fallback, got %v", requested)
+	}
+}
+
+func TestImageFetchQueueIsBoundedAndCancelable(t *testing.T) {
+	p := &Proxy{
+		fetchSlots: make(chan struct{}, 1),
+		fetchQueue: make(chan struct{}, 1),
+	}
+	release, err := p.acquireFetchSlot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	waiting := make(chan error, 1)
+	go func() {
+		_, err := p.acquireFetchSlot(ctx)
+		waiting <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for len(p.fetchQueue) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(p.fetchQueue) != 1 {
+		t.Fatal("second image request did not enter the bounded wait queue")
+	}
+	if _, err := p.acquireFetchSlot(context.Background()); !errors.Is(err, errImageQueueFull) {
+		t.Fatalf("overflow error = %v, want image queue full", err)
+	}
+	if err := <-waiting; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cancelled queue waiter error = %v", err)
+	}
+	if len(p.fetchQueue) != 0 {
+		t.Fatal("timed-out image request left a queue token behind")
+	}
+}
+
+func TestServeHTTPFallsBackToStaleRAMImageOnCDNError(t *testing.T) {
+	p := New()
+	p.validate = func(*url.URL) error { return nil }
+	tokenURL := p.Register("https://cdn.example/poster.jpg")
+	token := strings.TrimPrefix(tokenURL, "/api/v1/images/")
+	item := p.byToken[token]
+	stale := []byte("previously-cached-image")
+	p.cacheRAM(item, stale, "image/jpeg")
+	p.mu.Lock()
+	item.cachedAt = time.Now().Add(-cacheLifetime - time.Minute)
+	p.mu.Unlock()
+	p.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("simulated CDN outage")
+	})}
+
+	req := httptest.NewRequest(http.MethodGet, tokenURL, nil)
+	req.SetPathValue("token", token)
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != string(stale) {
+		t.Fatalf("stale response status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }

@@ -29,6 +29,8 @@ jobs:
         run: go test ./...
       - name: Check browser JavaScript syntax
         run: node --check internal/webui/assets/app.js
+      - name: Smoke-test browser startup and settings
+        run: node scripts/check-ui-startup.mjs
       - name: Check N1 installer shell syntax
         run: sh -n scripts/install-n1.sh
       - name: Prepare artifact directory

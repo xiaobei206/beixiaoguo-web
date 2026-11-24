@@ -34,7 +34,7 @@
     loadSequence: 0,
     autoLoadScheduled: false,
     detailRequestId: 0,
-    playback: {seriesId:"",seriesTitle:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false}
+    playback: {seriesId:"",seriesTitle:"",seriesCover:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false}
   };
 
   const navLabels = {
@@ -706,6 +706,117 @@
     status.textContent = currentPhase + " · " + (state.playback.quality || "自动") + " · " + rateLabel + "×";
   }
 
+  function getMediaSession() {
+    const nav = window.navigator || {};
+    return nav.mediaSession || null;
+  }
+
+  function updateMediaSessionMetadata() {
+    const session = getMediaSession();
+    if (!session || typeof window.MediaMetadata !== "function" || state.playback.index < 0) return;
+    const playback = state.playback;
+    const episode = playback.episodes[playback.index] || {};
+    const episodeNumber = episode.number || playback.index + 1;
+    const artworkURL = safeImage(playback.seriesCover);
+    const metadata = {
+      title: playback.seriesTitle || "贝小果短剧",
+      artist: "第 " + episodeNumber + " 集 · 贝小果",
+      album: "贝小果短剧",
+      artwork: artworkURL ? [{src:artworkURL}] : []
+    };
+    try {
+      session.metadata = new window.MediaMetadata(metadata);
+      if (typeof session.setPositionState === "function") session.setPositionState();
+    } catch (_) {}
+  }
+
+  function updateMediaSessionPositionState() {
+    const session = getMediaSession();
+    const video = $("#web-player");
+    if (!session || typeof session.setPositionState !== "function" || !video) return;
+    const duration = Number(video.duration);
+    const position = Number(video.currentTime);
+    const playbackRate = Number(video.playbackRate) || 1;
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) return;
+    try {
+      session.setPositionState({
+        duration,
+        position: Math.max(0, Math.min(position, duration)),
+        playbackRate
+      });
+    } catch (_) {}
+  }
+
+  function setMediaSessionPlaybackState(value) {
+    const session = getMediaSession();
+    if (!session || !["none", "paused", "playing"].includes(value)) return;
+    try { session.playbackState = value; } catch (_) {}
+    if (value !== "none") updateMediaSessionPositionState();
+  }
+
+  function clearMediaSession() {
+    const session = getMediaSession();
+    if (!session) return;
+    try { session.metadata = null; } catch (_) {}
+    try { session.playbackState = "none"; } catch (_) {}
+    try {
+      if (typeof session.setPositionState === "function") session.setPositionState();
+    } catch (_) {}
+  }
+
+  function installMediaSessionActionHandlers() {
+    const session = getMediaSession();
+    if (!session || typeof session.setActionHandler !== "function") return;
+    const handlers = {
+      play: () => {
+        const video = $("#web-player");
+        if (!video) return;
+        const result = video.play();
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      },
+      pause: () => {
+        const video = $("#web-player");
+        if (video) video.pause();
+      },
+      stop: () => stopPlayback(),
+      previoustrack: () => changeEpisode(-1),
+      nexttrack: () => changeEpisode(1),
+      seekto: (details) => {
+        const video = $("#web-player");
+        const seekTime = Number(details && details.seekTime);
+        if (!video || !Number.isFinite(seekTime)) return;
+        try {
+          if (details.fastSeek && typeof video.fastSeek === "function") video.fastSeek(seekTime);
+          else video.currentTime = seekTime;
+          updateMediaSessionPositionState();
+        } catch (_) {}
+      },
+      seekbackward: (details) => {
+        const video = $("#web-player");
+        if (!video) return;
+        const offset = Number(details && details.seekOffset) || 10;
+        try {
+          video.currentTime = Math.max(0, (Number(video.currentTime) || 0) - Math.max(0, offset));
+          updateMediaSessionPositionState();
+        } catch (_) {}
+      },
+      seekforward: (details) => {
+        const video = $("#web-player");
+        if (!video) return;
+        const offset = Number(details && details.seekOffset) || 10;
+        try {
+          const duration = Number(video.duration);
+          const target = (Number(video.currentTime) || 0) + Math.max(0, offset);
+          video.currentTime = Number.isFinite(duration) && duration > 0 ? Math.min(duration, target) : target;
+          updateMediaSessionPositionState();
+        } catch (_) {}
+      }
+    };
+    Object.entries(handlers).forEach(([action, handler]) => {
+      try { session.setActionHandler(action, handler); } catch (_) {}
+    });
+  }
+
   function isIOSDevice() {
     const nav = window.navigator || {};
     return /iPhone|iPad|iPod/i.test(nav.userAgent || "") ||
@@ -843,10 +954,11 @@
     const video = $("#web-player");
     const pipButton = $("#pip-hold-speed");
     if (pipButton) pipButton.hidden = true;
-    if (!video) return;
+    if (!video) { clearMediaSession(); return; }
     video.pause();
     video.removeAttribute("src");
     video.load();
+    clearMediaSession();
   }
 
   function setPlayerWebFullscreen(enabled) {
@@ -967,7 +1079,7 @@
       const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);
       const fav = state.favorites.some((entry) => entry.id === id);
-      state.playback = {seriesId:id,seriesTitle:title,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false};
+      state.playback = {seriesId:id,seriesTitle:title,seriesCover:cover,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false};
       body.innerHTML =
         '<div class="detail-hero">' +
         (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder detail-placeholder">贝</div>') +
@@ -1038,12 +1150,38 @@
         startPlayback(state.playback.index, $("#player-quality").value, position);
       });
       const video = $("#web-player");
-      video.addEventListener("playing", () => { setPlaybackActivity(true); syncPlaybackStatus("正在播放"); });
-      video.addEventListener("pause", () => { endTemporaryBoost(); setPlaybackActivity(false); syncPlaybackStatus(); });
-      video.addEventListener("ratechange", () => syncPlaybackStatus());
-      video.addEventListener("ended", () => { endTemporaryBoost(); setPlaybackActivity(false); });
-      video.addEventListener("error", () => { endTemporaryBoost(); setPlaybackActivity(false); });
-      video.addEventListener("loadedmetadata", syncPictureInPictureButton);
+      video.addEventListener("playing", () => {
+        setPlaybackActivity(true);
+        syncPlaybackStatus("正在播放");
+        setMediaSessionPlaybackState("playing");
+      });
+      video.addEventListener("pause", () => {
+        endTemporaryBoost();
+        setPlaybackActivity(false);
+        syncPlaybackStatus();
+        setMediaSessionPlaybackState("paused");
+      });
+      video.addEventListener("ratechange", () => {
+        syncPlaybackStatus();
+        updateMediaSessionPositionState();
+      });
+      video.addEventListener("timeupdate", updateMediaSessionPositionState);
+      video.addEventListener("durationchange", updateMediaSessionPositionState);
+      video.addEventListener("seeked", updateMediaSessionPositionState);
+      video.addEventListener("ended", () => {
+        endTemporaryBoost();
+        setPlaybackActivity(false);
+        setMediaSessionPlaybackState("paused");
+      });
+      video.addEventListener("error", () => {
+        endTemporaryBoost();
+        setPlaybackActivity(false);
+        setMediaSessionPlaybackState("paused");
+      });
+      video.addEventListener("loadedmetadata", () => {
+        syncPictureInPictureButton();
+        updateMediaSessionPositionState();
+      });
       video.addEventListener("enterpictureinpicture", () => { syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
       video.addEventListener("leavepictureinpicture", () => { endTemporaryBoost(); syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
       video.addEventListener("webkitpresentationmodechanged", () => { syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
@@ -1163,6 +1301,8 @@
     const episode = playback.episodes[index];
     if (!episode || !episode.id) return;
     playback.index = index;
+    updateMediaSessionMetadata();
+    setMediaSessionPlaybackState("paused");
     const requestID = ++playback.requestId;
     const episodeNumber = episode.number || index + 1;
     const panel = $("#playback-panel");
@@ -1212,7 +1352,10 @@
           syncPlaybackStatus("正在播放");
         }
       } catch (_) {
-        if (requestID === playback.requestId) status.textContent = "播放地址已就绪，点击视频播放键开始。";
+        if (requestID === playback.requestId) {
+          status.textContent = "播放地址已就绪，点击视频播放键开始。";
+          setMediaSessionPlaybackState("paused");
+        }
       }
       updateEpisodeButtons();
     } catch (error) {
@@ -1397,6 +1540,7 @@
     if (event.target === $("#install-dialog")) $("#install-dialog").close();
   });
   setupInstallPrompt();
+  installMediaSessionActionHandlers();
   bindHoldToAccelerate($("#pip-hold-speed"));
   document.addEventListener("visibilitychange", syncPictureInPictureHoldButton);
   window.addEventListener("focus", syncPictureInPictureHoldButton);

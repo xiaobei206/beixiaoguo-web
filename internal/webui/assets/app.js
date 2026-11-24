@@ -751,7 +751,7 @@
     const session = getMediaSession();
     if (!session || !["none", "paused", "playing"].includes(value)) return;
     try { session.playbackState = value; } catch (_) {}
-    if (value !== "none") updateMediaSessionPositionState();
+    if (value === "playing") updateMediaSessionPositionState();
   }
 
   function clearMediaSession() {

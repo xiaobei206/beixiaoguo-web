@@ -63,6 +63,7 @@ jobs:
           fail_on_unmatched_files: true
           body: |
             ## 本次更新
+            - 修复高频切换栏目/分页导致旧请求积压：前端取消过期列表 fetch，后端将 25 秒总超时覆盖到并发名额排队阶段，排队超时返回 504。
             - N1 / iStoreOS 新增 OpenWrt 原生 procd 服务：二进制安装在持久化的 /usr/bin/beixiaoguo，服务开机自启。
             - 服务进程异常退出后每隔 5 秒自动重试；加入本机健康检查守护，连续 3 次失败时请求 procd 重启应用实例。
             - 运行日志进入 OpenWrt 有界 RAM 日志缓冲，可用 `logread | grep -i beixiaoguo` 查看；缓存、会话和监控状态仍在 RAM，避免运行期间持续写入 TF 卡。

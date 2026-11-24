@@ -36,6 +36,9 @@ function getElement(selector) {
     currentTime: 0,
     duration: 0,
     ended: false,
+    complete: true,
+    naturalWidth: 480,
+    naturalHeight: 640,
     webkitPresentationMode: "inline",
     _pipSupported: true,
     textContent: "",
@@ -96,6 +99,7 @@ const window = {
   innerHeight: 800,
   scrollY: 0,
   navigator: { userAgent: "iPhone", platform: "iPhone", maxTouchPoints: 5, standalone: false, mediaSession },
+  location: { origin: "http://127.0.0.1:8780" },
   MediaMetadata: MockMediaMetadata,
   setTimeout() { return 1; },
   clearTimeout() {},
@@ -112,7 +116,26 @@ const document = {
   pictureInPictureEnabled: true,
   pictureInPictureElement: null,
   addEventListener() {},
-  createElement(tag) { return { tagName: String(tag).toUpperCase(), className: "", textContent: "" }; }
+  createElement(tag) {
+    if (String(tag).toLowerCase() === "canvas") {
+      return {
+        width: 0,
+        height: 0,
+        getContext(kind) {
+          assert.equal(kind, "2d", "Media artwork must use a 2D canvas");
+          return { fillRect() {}, drawImage() {} };
+        },
+        toDataURL(type, quality) {
+          assert.equal(this.width, 512, "Lock-screen artwork canvas must be 512px wide");
+          assert.equal(this.height, 512, "Lock-screen artwork canvas must be 512px tall");
+          assert.equal(type, "image/jpeg", "Lock-screen artwork must be encoded as JPEG");
+          assert.equal(quality, 0.9, "Lock-screen artwork JPEG quality must remain bounded");
+          return "data:image/jpeg;base64,c21va2U=";
+        }
+      };
+    }
+    return { tagName: String(tag).toUpperCase(), className: "", textContent: "" };
+  }
 };
 const localStorage = {
   getItem() { return null; },
@@ -224,7 +247,11 @@ assert.equal(mediaSession.playbackState, "playing", "The Media Session must foll
 assert.equal(mediaSession.metadata?.title, "Startup Smoke Series", "Lock-screen metadata must show the series title");
 assert.equal(mediaSession.metadata?.artist, "第 1 集 · 贝小果", "Lock-screen metadata must identify the current episode");
 assert.equal(mediaSession.metadata?.album, "贝小果短剧", "Lock-screen metadata must identify the app");
-assert.equal(mediaSession.metadata?.artwork?.[0]?.src, "/api/v1/images/0123456789abcdef0123456789abcdef", "Lock-screen artwork must use the N1-proxied series cover");
+assert.equal(mediaSession.metadata?.artwork?.[0]?.src, "data:image/jpeg;base64,c21va2U=", "Lock-screen artwork must publish a JPEG data image for iOS");
+assert.equal(mediaSession.metadata?.artwork?.[0]?.sizes, "512x512", "Lock-screen artwork must advertise its exact square dimensions");
+assert.equal(mediaSession.metadata?.artwork?.[0]?.type, "image/jpeg", "Lock-screen artwork must declare its JPEG MIME type");
+assert.equal(mediaSession.metadata?.artwork?.[1]?.src, "http://127.0.0.1:8780/api/v1/images/0123456789abcdef0123456789abcdef", "Lock-screen artwork must retain an absolute N1-proxy fallback URL");
+assert.equal(mediaSession.metadata?.artwork?.[1]?.sizes, "480x640", "The proxy fallback must report the loaded cover's real dimensions");
 assert.ok(mediaSession.handlers.has("play") && mediaSession.handlers.has("pause"), "Lock-screen play and pause actions must be registered");
 assert.ok(mediaSession.handlers.has("previoustrack") && mediaSession.handlers.has("nexttrack"), "Lock-screen previous/next actions must be registered");
 assert.ok(mediaSession.handlers.has("seekto") && mediaSession.handlers.has("seekbackward") && mediaSession.handlers.has("seekforward"), "Lock-screen seek actions must be registered");

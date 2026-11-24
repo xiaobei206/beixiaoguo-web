@@ -471,8 +471,10 @@ func (p *Proxy) cacheFetched(item *entry, body []byte, contentType string) ([]by
 
 type CacheStats struct {
 	RAMBytes           int64
+	RAMLimitBytes      int64
 	RAMEntries         int
 	DiskBytes          int64
+	DiskLimitBytes     int64
 	DiskEntries        int
 	FetchActive        int
 	FetchQueued        int
@@ -481,6 +483,7 @@ type CacheStats struct {
 
 func (p *Proxy) Stats() CacheStats {
 	stats := CacheStats{
+		RAMLimitBytes:      maxCacheBytes,
 		FetchActive:        len(p.fetchSlots),
 		FetchQueued:        len(p.fetchQueue),
 		FetchQueueCapacity: cap(p.fetchQueue),
@@ -495,6 +498,7 @@ func (p *Proxy) Stats() CacheStats {
 	p.mu.Unlock()
 	if p.disk != nil {
 		stats.DiskBytes, stats.DiskEntries = p.disk.stats()
+		stats.DiskLimitBytes = p.disk.maxBytes
 	}
 	return stats
 }

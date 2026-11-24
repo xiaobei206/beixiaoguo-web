@@ -61,6 +61,8 @@ type contextKey uint8
 
 const requestIDKey contextKey = 1
 
+var errSeriesNotFound = errors.New("series not found")
+
 func New(client *sdk.Client, version string, logger *log.Logger) http.Handler {
 	return newHandler(client, version, logger, false)
 }
@@ -101,7 +103,7 @@ func newHandler(client *sdk.Client, version string, logger *log.Logger, startPre
 	mux.HandleFunc("GET /api/v1/new-releases", s.newReleases)
 	mux.HandleFunc("GET /api/v1/rank", s.shortRank)
 	mux.HandleFunc("GET /api/v1/series/{id}", s.series)
-	mux.HandleFunc("GET /api/v1/series/{id}/episodes", s.episodes)
+\tmux.HandleFunc("GET /api/v1/series/{id}/detail", s.seriesDetail)\n	mux.HandleFunc("GET /api/v1/series/{id}/episodes", s.episodes)
 	mux.HandleFunc("GET /api/v1/series/{id}/seasons", s.seasons)
 	mux.HandleFunc("GET /api/v1/play/{episodeID}", s.play)
 	mux.Handle("GET /api/v1/media/{token}", s.media)
@@ -309,6 +311,29 @@ func (s *Server) series(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "缺少短剧 ID", "")
+		return
+	}
+	s.run(w, r, "series-detail", func(ctx context.Context) (any, error) {
+		// GetSeries and ListEpisodes both call the same upstream seriesDetail API.
+		// GetSeriesBatch returns the series and its episodes in one upstream request.
+		details, err := s.client.GetSeriesBatch(ctx, []string{id})
+		if err != nil {
+			return nil, err
+		}
+		if len(details) == 0 || details[0].Series == nil {
+			return nil, errSeriesNotFound
+		}
+		return map[string]any{
+			"series":   details[0].Series,
+			"episodes": details[0].Episodes,
+		}, nil
+	})
+}
+
 func (s *Server) episodes(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -477,6 +502,8 @@ func (s *Server) run(w http.ResponseWriter, r *http.Request, operation string, c
 		id, _ := r.Context().Value(requestIDKey).(string)
 		status, code, message := http.StatusBadGateway, "UPSTREAM_ERROR", "片库请求失败，请稍后重试"
 		switch {
+		case errors.Is(err, errSeriesNotFound):
+			status, code, message = http.StatusNotFound, "SERIES_NOT_FOUND", "作品不存在或暂不可用"
 		case errors.Is(err, context.DeadlineExceeded):
 			status, code, message = http.StatusGatewayTimeout, "UPSTREAM_TIMEOUT", "片库响应超时，请稍后重试"
 		case errors.Is(err, media.ErrUnsupportedStream):
@@ -510,7 +537,7 @@ func cacheTTL(operation string) time.Duration {
 		return 6 * time.Hour
 	case "hot-search":
 		return 30 * time.Minute
-	case "series", "seasons":
+	case "series", "series-detail", "seasons":
 		return 24 * time.Hour
 	case "episodes":
 		return 12 * time.Hour

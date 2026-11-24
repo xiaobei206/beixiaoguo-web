@@ -63,6 +63,7 @@ jobs:
           fail_on_unmatched_files: true
           body: |
             ## 本次更新
+            - 修复媒体 CDN 返回空/短 Range 正文但带有效 Content-Range 时，浏览器仍收到空 200/206：先核验响应长度并预读最多 64 KiB，异常源自动切换备用源。
             - 修复高频切换栏目/分页导致旧请求积压：前端取消过期列表 fetch，后端将 25 秒总超时覆盖到并发名额排队阶段，排队超时返回 504。
             - N1 / iStoreOS 新增 OpenWrt 原生 procd 服务：二进制安装在持久化的 /usr/bin/beixiaoguo，服务开机自启。
             - 服务进程异常退出后每隔 5 秒自动重试；加入本机健康检查守护，连续 3 次失败时请求 procd 重启应用实例。

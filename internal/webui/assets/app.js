@@ -640,6 +640,7 @@
     if (state.playback.temporaryBoost) return true;
     state.playback.temporaryBoost = true;
     video.playbackRate = 2;
+    syncPlaybackStatus();
     ["#player-hold-speed", "#pip-hold-speed"].forEach((selector) => {
       const button = $(selector);
       if (button) button.classList.add("holding");
@@ -654,6 +655,7 @@
     state.playback.temporaryBoost = false;
     const video = $("#web-player");
     if (video) video.playbackRate = Number(state.playback.speed) || 1;
+    syncPlaybackStatus();
     ["#player-hold-speed", "#pip-hold-speed"].forEach((selector) => {
       const button = $(selector);
       if (button) button.classList.remove("holding");
@@ -692,15 +694,93 @@
     button.addEventListener("contextmenu", (event) => event.preventDefault());
   }
 
+  function syncPlaybackStatus(phase) {
+    const video = $("#web-player");
+    const status = $("#playback-status");
+    if (!video || !status || state.playback.index < 0) return;
+    const previous = String(status.textContent || "");
+    if (!phase && !/^(正在播放|已暂停)/.test(previous)) return;
+    const currentPhase = phase || (video.paused ? "已暂停" : "正在播放");
+    const rate = Number.isFinite(Number(video.playbackRate)) ? Number(video.playbackRate) : 1;
+    const rateLabel = String(Number(rate.toFixed(2)));
+    status.textContent = currentPhase + " · " + (state.playback.quality || "自动") + " · " + rateLabel + "×";
+  }
+
+  function isIOSDevice() {
+    const nav = window.navigator || {};
+    return /iPhone|iPad|iPod/i.test(nav.userAgent || "") ||
+      (nav.platform === "MacIntel" && nav.maxTouchPoints > 1);
+  }
+
+  function isPictureInPictureActive(video) {
+    return !!video && (
+      document.pictureInPictureElement === video ||
+      video.webkitPresentationMode === "picture-in-picture"
+    );
+  }
+
+  function supportsPictureInPicture(video) {
+    if (!video) return false;
+    // WebKit's capability probe is more reliable than the standard flag in iOS Home Screen apps.
+    if (typeof video.webkitSupportsPresentationMode === "function") {
+      try { return video.webkitSupportsPresentationMode("picture-in-picture"); }
+      catch (_) { return false; }
+    }
+    return !!(document.pictureInPictureEnabled && typeof video.requestPictureInPicture === "function");
+  }
+
+  function syncPictureInPictureButton() {
+    const button = $("#player-pip");
+    const video = $("#web-player");
+    if (!button || !video) return;
+    const supported = supportsPictureInPicture(video);
+    const active = isPictureInPictureActive(video);
+    const standaloneIOSBlocked = isIOSDevice() && isStandaloneApp() &&
+      typeof video.webkitSupportsPresentationMode === "function" && !supported;
+    button.hidden = !supported && !standaloneIOSBlocked;
+    button.textContent = active ? "退出画中画" : (supported ? "画中画" : "画中画不可用");
+    button.classList.toggle("unavailable", !supported);
+    button.setAttribute("aria-disabled", String(!supported));
+    button.title = supported
+      ? (active ? "退出画中画" : "将当前视频缩放为系统悬浮小窗")
+      : "iOS 主屏幕网页 App 当前不支持画中画，请从 Safari 标签页打开贝小果";
+  }
+
+  async function togglePictureInPicture() {
+    const video = $("#web-player");
+    if (!video) return;
+    if (!supportsPictureInPicture(video)) {
+      showToast("iOS 主屏幕网页 App 当前不支持画中画；请在 Safari 标签页打开贝小果后播放。");
+      return;
+    }
+    try {
+      if (video.webkitPresentationMode === "picture-in-picture" &&
+          typeof video.webkitSetPresentationMode === "function") {
+        video.webkitSetPresentationMode("inline");
+      } else if (document.pictureInPictureElement === video && typeof document.exitPictureInPicture === "function") {
+        await document.exitPictureInPicture();
+      } else if (typeof video.webkitSetPresentationMode === "function") {
+        video.webkitSetPresentationMode("picture-in-picture");
+      } else if (typeof video.requestPictureInPicture === "function") {
+        await video.requestPictureInPicture();
+      } else {
+        showToast("当前浏览器不支持画中画");
+      }
+    } catch (error) {
+      const message = error && error.name === "NotSupportedError"
+        ? "当前运行模式不支持画中画，请从 Safari 标签页打开贝小果。"
+        : "无法进入画中画：" + (error && error.message ? error.message : "浏览器拒绝了请求");
+      showToast(message);
+    }
+    syncPictureInPictureButton();
+    syncPictureInPictureHoldButton();
+  }
+
   function syncPictureInPictureHoldButton() {
     const video = $("#web-player");
     const button = $("#pip-hold-speed");
     if (!button) return;
-    const active = !!video && (
-      document.pictureInPictureElement === video ||
-      video.webkitPresentationMode === "picture-in-picture"
-    );
-    button.hidden = !active;
+    button.hidden = !isPictureInPictureActive(video);
   }
 
   function isStandaloneApp() {
@@ -906,6 +986,7 @@
         '<option value="2.5">2.5×</option><option value="3">3×</option></select></label>' +
         '' +
         '<button id="player-cast" class="player-action" type="button" title="投屏到 hongguoTV">投屏</button>' +
+        '<button id="player-pip" class="player-action" type="button" hidden>画中画</button>' +
         '<button id="player-web-fullscreen" class="player-action" type="button" aria-pressed="false">网页全屏</button>' +
         '<button id="player-fullscreen" class="player-action" type="button">系统全屏</button>' +
         '<button id="player-close" class="player-close" type="button">收起</button></div>' +
@@ -939,6 +1020,9 @@
       $("#player-next").addEventListener("click", () => changeEpisode(1));
       $("#player-cast").addEventListener("click", openCastPicker);
       bindHoldToAccelerate($("#player-hold-speed"));
+      bindHoldToAccelerate($("#pip-hold-speed"));
+      $("#player-pip").addEventListener("click", togglePictureInPicture);
+      syncPictureInPictureButton();
       $("#player-web-fullscreen").addEventListener("click", () => {
         const panel = $("#playback-panel");
         setPlayerWebFullscreen(!panel.classList.contains("web-fullscreen"));
@@ -946,6 +1030,7 @@
       $("#player-speed").addEventListener("change", (event) => {
         state.playback.speed = Number(event.target.value) || 1;
         $("#web-player").playbackRate = state.playback.temporaryBoost ? 2 : state.playback.speed;
+        syncPlaybackStatus();
       });
       $("#player-quality").addEventListener("change", () => {
         const video = $("#web-player");
@@ -953,13 +1038,15 @@
         startPlayback(state.playback.index, $("#player-quality").value, position);
       });
       const video = $("#web-player");
-      video.addEventListener("playing", () => setPlaybackActivity(true));
-      video.addEventListener("pause", () => { endTemporaryBoost(); setPlaybackActivity(false); });
+      video.addEventListener("playing", () => { setPlaybackActivity(true); syncPlaybackStatus("正在播放"); });
+      video.addEventListener("pause", () => { endTemporaryBoost(); setPlaybackActivity(false); syncPlaybackStatus(); });
+      video.addEventListener("ratechange", () => syncPlaybackStatus());
       video.addEventListener("ended", () => { endTemporaryBoost(); setPlaybackActivity(false); });
       video.addEventListener("error", () => { endTemporaryBoost(); setPlaybackActivity(false); });
-      video.addEventListener("enterpictureinpicture", syncPictureInPictureHoldButton);
-      video.addEventListener("leavepictureinpicture", () => { endTemporaryBoost(); syncPictureInPictureHoldButton(); });
-      video.addEventListener("webkitpresentationmodechanged", syncPictureInPictureHoldButton);
+      video.addEventListener("loadedmetadata", syncPictureInPictureButton);
+      video.addEventListener("enterpictureinpicture", () => { syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
+      video.addEventListener("leavepictureinpicture", () => { endTemporaryBoost(); syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
+      video.addEventListener("webkitpresentationmodechanged", () => { syncPictureInPictureButton(); syncPictureInPictureHoldButton(); });
       video.addEventListener("ended", () => {
         if (state.playback.index >= 0) {
           const next = findPlayableEpisode(state.playback.index, 1);
@@ -1122,7 +1209,7 @@
       try {
         await video.play();
         if (requestID === playback.requestId) {
-          status.textContent = "正在播放 · " + (info.quality || "自动") + " · " + video.playbackRate + "×";
+          syncPlaybackStatus("正在播放");
         }
       } catch (_) {
         if (requestID === playback.requestId) status.textContent = "播放地址已就绪，点击视频播放键开始。";

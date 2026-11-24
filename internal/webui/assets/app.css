@@ -265,7 +265,17 @@ main { min-height:65vh; }
   display:flex; flex-direction:column; justify-content:center; overflow:hidden;
   border:0; border-radius:0; background:#050507; box-sizing:border-box;
 }
-#playback-panel.web-fullscreen .player-toolbar { flex:0 0 auto; gap:7px; margin-bottom:6px; padding:3px 0; }
+#playback-panel.web-fullscreen .player-toolbar {
+  position:absolute; z-index:8; top:0; left:0; right:0; flex:0 0 auto; gap:7px;
+  margin:0; padding:calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 12px) 12px calc(env(safe-area-inset-left) + 12px);
+  background:linear-gradient(180deg,rgba(0,0,0,.82),rgba(0,0,0,.48) 76%,transparent);
+  backdrop-filter:blur(10px); box-sizing:border-box;
+  opacity:0; visibility:hidden; pointer-events:none; transform:translateY(-10px);
+  transition:opacity .18s ease,transform .18s ease,visibility .18s;
+}
+#playback-panel.web-fullscreen.player-controls-visible .player-toolbar {
+  opacity:1; visibility:visible; pointer-events:auto; transform:translateY(0);
+}
 #playback-panel.web-fullscreen .player-toolbar > span { flex:1 1 150px; min-width:0; }
 #playback-panel.web-fullscreen .player-stage {
   flex:1 1 auto; min-height:0; min-width:0; width:100%;
@@ -275,11 +285,11 @@ main { min-height:65vh; }
   width:100%; height:100%; max-height:none; aspect-ratio:auto; border-radius:0; object-fit:contain;
 }
 #playback-panel.web-fullscreen .player-nav, #playback-panel.web-fullscreen .player-nav[hidden] { display:none !important; }
-#playback-panel.web-fullscreen .playback-status { flex:0 0 auto; max-height:2.7em; overflow:hidden; padding-top:5px; }
+#playback-panel.web-fullscreen .playback-status { display:none; }
 #playback-panel.web-fullscreen #web-player::-webkit-media-controls-fullscreen-button { display:none; }
 @media (orientation:landscape) and (max-height:500px) {
   #playback-panel.web-fullscreen { padding:4px max(8px,env(safe-area-inset-right)) 4px max(8px,env(safe-area-inset-left)); }
-  #playback-panel.web-fullscreen .player-toolbar { gap:5px; margin-bottom:2px; padding:0; }
+  #playback-panel.web-fullscreen .player-toolbar { gap:5px; padding:calc(env(safe-area-inset-top) + 6px) calc(env(safe-area-inset-right) + 8px) 8px calc(env(safe-area-inset-left) + 8px); }
   #playback-panel.web-fullscreen .player-toolbar > span { flex-basis:120px; }
   #playback-panel.web-fullscreen .player-nav { padding-top:3px; }
   #playback-panel.web-fullscreen .playback-status { display:none; }

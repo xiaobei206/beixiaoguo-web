@@ -152,3 +152,46 @@ func TestValidatePublicURLRejectsLocalAndNonHTTPS(t *testing.T) {
 		t.Errorf("rejected public HTTPS URL: %v", err)
 	}
 }
+
+func TestOpenRangeSkipsEmptyPrimaryAndUsesBackup(t *testing.T) {
+	payload := []byte("0123456789")
+	var attempts []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts = append(attempts, r.URL.Path)
+		w.Header().Set("Content-Range", "bytes 0-9/10")
+		w.WriteHeader(http.StatusPartialContent)
+		if r.URL.Path == "/valid" {
+			_, _ = w.Write(payload)
+		}
+	}))
+	defer upstream.Close()
+
+	service := &Service{
+		httpClient: upstream.Client(),
+		logger:     log.New(io.Discard, "", 0),
+		validateURL: func(*url.URL) error {
+			return nil
+		},
+	}
+	session := &playbackSession{
+		sources: []string{upstream.URL + "/empty", upstream.URL + "/valid"},
+		size:    int64(len(payload)),
+	}
+
+	resp, err := service.openRange(context.Background(), session, 0, int64(len(payload)-1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("body = %q, want %q", got, payload)
+	}
+	if len(attempts) != 2 || attempts[0] != "/empty" || attempts[1] != "/valid" {
+		t.Fatalf("upstream attempts = %v, want empty primary then valid backup", attempts)
+	}
+}

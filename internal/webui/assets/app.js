@@ -34,7 +34,7 @@
     loadSequence: 0,
     autoLoadScheduled: false,
     detailRequestId: 0,
-    playback: {seriesId:"",seriesTitle:"",seriesCover:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false}
+    playback: {seriesId:"",seriesTitle:"",seriesCover:"",seriesArtworkDataURL:"",episodes:[],index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false}
   };
 
   const navLabels = {
@@ -711,6 +711,66 @@
     return nav.mediaSession || null;
   }
 
+  function buildMediaSessionArtwork(artworkURL) {
+    const playback = state.playback;
+    const artwork = [];
+    const coverImage = $("#detail-content .detail-hero img");
+    const width = coverImage ? Number(coverImage.naturalWidth) || 0 : 0;
+    const height = coverImage ? Number(coverImage.naturalHeight) || 0 : 0;
+
+    // Re-encode the already displayed same-origin cover as a small, square JPEG.
+    // iOS lock-screen artwork decoders are more reliable with a concrete image
+    // payload, explicit dimensions and a widely supported MIME type.
+    if (!playback.seriesArtworkDataURL && coverImage && coverImage.complete && width > 0 && height > 0) {
+      try {
+        const canvasSize = 512;
+        const canvas = document.createElement("canvas");
+        canvas.width = canvasSize;
+        canvas.height = canvasSize;
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.fillStyle = "#10131a";
+          context.fillRect(0, 0, canvasSize, canvasSize);
+          const scale = Math.min(canvasSize / width, canvasSize / height);
+          const drawWidth = width * scale;
+          const drawHeight = height * scale;
+          context.drawImage(
+            coverImage,
+            (canvasSize - drawWidth) / 2,
+            (canvasSize - drawHeight) / 2,
+            drawWidth,
+            drawHeight
+          );
+          const dataURL = canvas.toDataURL("image/jpeg", 0.9);
+          if (typeof dataURL === "string" && dataURL.indexOf("data:image/jpeg;base64,") === 0) {
+            playback.seriesArtworkDataURL = dataURL;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (playback.seriesArtworkDataURL) {
+      artwork.push({
+        src: playback.seriesArtworkDataURL,
+        sizes: "512x512",
+        type: "image/jpeg"
+      });
+    }
+
+    // Keep an absolute N1-proxy URL as a fallback for browsers which prefer
+    // fetching artwork themselves, with the actual dimensions when available.
+    if (artworkURL) {
+      const origin = String(window.location && window.location.origin || "");
+      const absoluteURL = origin && artworkURL.charAt(0) === "/"
+        ? origin + artworkURL
+        : artworkURL;
+      const fallback = {src:absoluteURL};
+      if (width > 0 && height > 0) fallback.sizes = width + "x" + height;
+      artwork.push(fallback);
+    }
+    return artwork;
+  }
+
   function updateMediaSessionMetadata() {
     const session = getMediaSession();
     if (!session || typeof window.MediaMetadata !== "function" || state.playback.index < 0) return;
@@ -722,7 +782,7 @@
       title: playback.seriesTitle || "贝小果短剧",
       artist: "第 " + episodeNumber + " 集 · 贝小果",
       album: "贝小果短剧",
-      artwork: artworkURL ? [{src:artworkURL}] : []
+      artwork: buildMediaSessionArtwork(artworkURL)
     };
     try {
       session.metadata = new window.MediaMetadata(metadata);
@@ -1079,7 +1139,7 @@
       const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);
       const fav = state.favorites.some((entry) => entry.id === id);
-      state.playback = {seriesId:id,seriesTitle:title,seriesCover:cover,episodes:episodes,index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false};
+      state.playback = {seriesId:id,seriesTitle:title,seriesCover:cover,seriesArtworkDataURL:"",episodes:episodes,index:-1,quality:"best",speed:1,requestId:0,temporaryBoost:false};
       body.innerHTML =
         '<div class="detail-hero">' +
         (cover ? '<img src="' + escapeHTML(cover) + '" alt="">' : '<div class="poster-placeholder detail-placeholder">贝</div>') +
@@ -1111,6 +1171,12 @@
         episodes.map((ep) => '<button class="episode-chip" type="button" data-episode-id="' + escapeHTML(ep.id) + '" data-episode-number="' + escapeHTML(ep.number || "") + '"' + (ep.playable === false ? ' disabled title="当前分集不可播放"' : '') + '>' + escapeHTML("第 " + (ep.number || "") + " 集") + '</button>').join("") +
         '</div><div class="player-note">支持 0.5–3 倍速、按住临时 2×、上下滑切集和自动连播。视频仍由 N1 按需读取与解密；投屏通过局域网交给 hongguoTV。</div>';
 
+      const detailCoverImage = body.querySelector(".detail-hero img");
+      if (detailCoverImage) {
+        detailCoverImage.addEventListener("load", () => {
+          if (state.playback.seriesId === id && state.playback.index >= 0) updateMediaSessionMetadata();
+        }, {once:true});
+      }
       if (hasMultiSeason) loadSeasonChoices(id, detailRequestID);
       $("#favorite-toggle").addEventListener("click", () => toggleFavorite(normalize(series)));
       body.querySelector(".episode-grid").addEventListener("click", (event) => {

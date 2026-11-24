@@ -709,12 +709,10 @@
     body.innerHTML = '<div class="empty-state">正在载入剧集详情…</div>';
     if (!dialog.open) dialog.showModal();
     try {
-      const [series, episodePage] = await Promise.all([
-        request("/api/v1/series/" + encodeURIComponent(id)),
-        request("/api/v1/series/" + encodeURIComponent(id) + "/episodes")
-      ]);
+      const detail = await request("/api/v1/series/" + encodeURIComponent(id) + "/detail");
       if (detailRequestID !== state.detailRequestId) return;
-      const episodes = episodePage.items || [];
+      const series = detail.series || {};
+      const episodes = detail.episodes || [];
       const hasMultiSeason = !!(series.is_multi_season || series.related_album_id);
       const title = series.title || "贝小果短剧";
       const cover = safeImage(series.cover_url || series.coverUrl);

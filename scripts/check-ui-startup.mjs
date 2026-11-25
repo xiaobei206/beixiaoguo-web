@@ -317,9 +317,9 @@ assert.match(cssSource, /#playback-panel\.web-fullscreen\.player-controls-visibl
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.playback-status\s*\{\s*display:\s*none;/, "Fullscreen playback status must not reserve additional video height");
 assert.match(cssSource, /\.player-nav\[hidden\]\s*\{\s*display:\s*none\s*!important;/, "Hidden episode navigation must not render even if styles conflict");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav[^\{]*\{\s*display:\s*none\s*!important;/, "Web fullscreen must force-hide previous/next episode buttons");
-assert.match(indexSource, /app\.css\?v=0\.1\.27/, "The page template must cache-bust the updated stylesheet");
-assert.match(indexSource, /app\.js\?v=0\.1.27/, "The page template must cache-bust the updated script");
-assert.match(indexSource, /<b>0\.1\.27<\/b>/, "The visible footer version must match the release version");
+assert.match(indexSource, /app\.css\?v=0\.1\.28/, "The page template must cache-bust the updated stylesheet");
+assert.match(indexSource, /app\.js\?v=0\.1\.28/, "The page template must cache-bust the updated script");
+assert.match(indexSource, /<b>0\.1\.28<\/b>/, "The visible footer version must match the release version");
 const dialogCloseRule = cssSource.match(/\.dialog-close\s*\{([^}]*)\}/)?.[1] ?? "";
 assert.match(dialogCloseRule, /-webkit-appearance:\s*none/, "Dialog close buttons must disable native WebKit button appearance");
 assert.match(dialogCloseRule, /appearance:\s*none/, "Dialog close buttons must use normalized button appearance");
@@ -327,6 +327,11 @@ assert.match(dialogCloseRule, /display:\s*grid/, "Dialog close button content mu
 assert.match(dialogCloseRule, /padding:\s*0/, "Dialog close buttons must have no native padding");
 assert.match(dialogCloseRule, /width:\s*34px/, "Dialog close buttons must have a fixed circular width");
 assert.match(dialogCloseRule, /height:\s*34px/, "Dialog close buttons must have a fixed circular height");
+assert.match(dialogCloseRule, /border:\s*1px solid rgba\(241,106,138,\.72\)/, "The circular close button border must be pink");
+const dialogCloseFocusRules = cssSource.match(/\.dialog-close:focus,\s*\.dialog-close:focus-visible\s*\{([^}]*)\}/)?.[1] ?? "";
+assert.match(dialogCloseFocusRules, /outline:\s*none/, "The close button must not draw a square focus outline");
+assert.match(dialogCloseFocusRules, /border-color:\s*#f16a8a/, "Keyboard or pointer focus must color the circle itself pink");
+assert.doesNotMatch(cssSource, /\.dialog-close:focus-visible\s*\{\s*outline:\s*2px/, "The previous square outline must stay removed");
 assert.match(cssSource, /\.dialog-close::before,\s*\.dialog-close::after\s*\{/, "The close icon must be drawn with centered CSS strokes");
 assert.match(cssSource, /\.dialog-close::after\s*\{[^}]*rotate\(-45deg\)/s, "The close icon must have two crossing strokes");
 const episodeGridClick = listeners.get("#detail-content .episode-grid")?.get("click");

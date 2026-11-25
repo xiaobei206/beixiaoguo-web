@@ -66,10 +66,10 @@ jobs:
           overwrite_files: true
           body: |
             ## 本次更新
-            - 修复详情、添加到桌面、投屏和设置弹窗右上角关闭按钮在 iOS Safari 上外圈变椭圆、叉号视觉偏心的问题。
-            - 禁用 WebKit 原生按钮外观，统一按钮为 34×34px 正圆并清除默认内边距；叉号改为按中心对齐的 CSS 双线绘制，避免不同系统字体的字形基线影响视觉位置。
-            - 增加关闭按钮样式与资源缓存键的 UI 冒烟断言；CSS/JS 资源缓存键和页脚版本同步升级到 0.1.27。
-            - 保留 0.1.26 的桌面与 iPhone 系统全屏兼容性修复，播放、全屏和切集逻辑没有改动。
+            - 移除详情、安装、投屏和设置弹窗关闭按钮外侧多余的方形焦点框。
+            - 粉色改为直接显示在圆形边框上；点击或键盘聚焦时只改变圆边框颜色，不再绘制方形 outline。
+            - 保留 0.1.27 的 34×34px 正圆、零内边距和 CSS 居中 X；播放、全屏与切集逻辑没有改动。
+            - 增加 UI 冒烟断言，CSS/JS 资源缓存键和页脚版本同步升级到 0.1.28。
             ## 下载
             - N1 / iStoreOS（ARM64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-arm64`
             - Linux x86_64（AMD64）：`beixiaoguo-v${{ steps.meta.outputs.version }}-linux-amd64`

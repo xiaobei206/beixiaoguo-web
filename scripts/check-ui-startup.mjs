@@ -317,9 +317,8 @@ assert.match(cssSource, /#playback-panel\.web-fullscreen\.player-controls-visibl
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.playback-status\s*\{\s*display:\s*none;/, "Fullscreen playback status must not reserve additional video height");
 assert.match(cssSource, /\.player-nav\[hidden\]\s*\{\s*display:\s*none\s*!important;/, "Hidden episode navigation must not render even if styles conflict");
 assert.match(cssSource, /#playback-panel\.web-fullscreen \.player-nav[^\{]*\{\s*display:\s*none\s*!important;/, "Web fullscreen must force-hide previous/next episode buttons");
-assert.match(indexSource, /app\.css\?v=0\.1\.26/, "The page template must cache-bust the updated stylesheet");
-assert.match(indexSource, /app\.js\?v=0\.1.27/, "The page template must cache-bust the updated script");
 assert.match(indexSource, /app\.css\?v=0\.1\.27/, "The page template must cache-bust the updated stylesheet");
+assert.match(indexSource, /app\.js\?v=0\.1.27/, "The page template must cache-bust the updated script");
 assert.match(indexSource, /<b>0\.1\.27<\/b>/, "The visible footer version must match the release version");
 const dialogCloseRule = cssSource.match(/\.dialog-close\s*\{([^}]*)\}/)?.[1] ?? "";
 assert.match(dialogCloseRule, /-webkit-appearance:\s*none/, "Dialog close buttons must disable native WebKit button appearance");
